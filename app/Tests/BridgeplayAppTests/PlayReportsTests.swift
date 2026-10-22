@@ -115,22 +115,22 @@ struct PlayReportsTests {
         let ended = Self.local("Wed Oct 21 20:01:15 2026")
         let quit = Self.log("""
             === game exited status=3, killing wine prefix ===
-            === exit summary: exit status 3 after 75s, the game quit by itself (abort() in the C runtime or a breakpoint, usually after the game's own error message) ===
+            === exit summary: exit status 3 after 75s, the game quit by itself (likely abort() in the C runtime or a breakpoint, usually after the game's own error message) ===
             === session health: healthy after 75s ===
             """)
         let session = try #require(GameSession.last(in: quit, modified: ended))
         #expect(session.summary(log: quit, wineLog: nil)
-                == "Session 1 min, exit status 3 after 75s, the game quit by itself (abort() in the C runtime or a breakpoint, usually after the game's own error message)")
+                == "Session 1 min, exit status 3 after 75s, the game quit by itself (likely abort() in the C runtime or a breakpoint, usually after the game's own error message)")
 
         let crashed = Self.log("""
             === game exited status=5, killing wine prefix ===
-            === exit summary: exit status 5 after 12s, the game quit by itself (0xc0000005, an access violation: the game crashed) ===
+            === exit summary: exit status 5 after 12s, the game quit by itself (likely 0xc0000005, an access violation: the game crashed) ===
             === exit cause: wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger... ===
             === exit cause: Unhandled exception: page fault on read access to 0x00000000 in 64-bit code (0x0000000140001234). ===
             """)
         let crash = try #require(GameSession.last(in: crashed, modified: ended))
         #expect(crash.summary(log: crashed, wineLog: "no error lines left in this tail")
-                == "Session 1 min, exit status 5 after 12s, the game quit by itself (0xc0000005, an access violation: the game crashed), first Wine error: wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger...")
+                == "Session 1 min, exit status 5 after 12s, the game quit by itself (likely 0xc0000005, an access violation: the game crashed), first Wine error: wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger...")
     }
 
     @Test("Without an exit summary the status stands, and Wine's first error is redacted")
@@ -180,6 +180,18 @@ struct PlayReportsTests {
         #expect(GameReport.wineTail("short\n", limit: 1000) == "short\n")
         let quiet = String(repeating: "x\n", count: 1000)
         #expect(GameReport.wineTail(quiet, limit: 100) == String(quiet.suffix(100)))
+
+        // A second error just inside the last 1000 characters gives way to the heading, so
+        // it moves up into it.
+        let late = "wine: could not load late.dll\n"
+        let filler = String(repeating: "f", count: 1000 - late.count - 20) + "\n"
+        let two = "fixme:a\n" + early + String(repeating: "trace line\n", count: 500) + late + filler
+            + String(repeating: "t\n", count: 10)
+        let both = GameReport.wineTail(two, limit: 1000)
+        #expect(both.count <= 1000)
+        #expect(both.contains("wine: could not load late.dll"))
+        #expect(both.hasPrefix("--- Wine error lines from earlier in this log ---\n" + early))
+        #expect(both.hasSuffix("t\nt\n"))
     }
 
     @Test("A report says when a newer Bridgeplay was out")

@@ -106,6 +106,8 @@ enum GameReport {
             (#"/Volumes/(?!Preboot/|Macintosh HD/)[^/\n:]+"#, "/Volumes/<drive>"),
             // Wine's view of a home folder whose name differs from the account name.
             (#"(?i)\b([A-Za-z]:\\+Users\\+)(?!(?:crossover|public|steamuser)\b)[^\\\s:'"]+"#, "$1<user>"),
+            // Any other Mac home folder: another account, or the home path spelled differently.
+            (#"(?<![\w.~])/Users/(?!Shared\b)[^/\s:'"]+"#, "/Users/<user>"),
         ]
         for name in [user] + computerNames where name.count >= 3 {
             text = text.replacingOccurrences(of: #"\b\#(NSRegularExpression.escapedPattern(for: name))\b"#,
@@ -140,12 +142,18 @@ enum GameReport {
     // doesn't fit go first, so a crash early in a long session still reaches the report.
     static func wineTail(_ log: String, limit: Int) -> String {
         guard log.count > limit else { return log }
-        let cut = log.index(log.endIndex, offsetBy: -limit)
-        let early = wineErrorLines(in: log[..<cut], limit: 20)
-        guard !early.isEmpty else { return String(log[cut...]) }
-        let head = "--- Wine error lines from earlier in this log ---\n" + early.joined(separator: "\n")
-            + "\n--- end of the log ---\n"
-        return head + String(log.suffix(max(0, limit - head.count)))
+        // The heading takes room from the tail, and the part that gives way is searched too.
+        var keep = limit
+        while true {
+            let cut = log.index(log.endIndex, offsetBy: -keep)
+            let early = wineErrorLines(in: log[..<cut], limit: 20)
+            guard !early.isEmpty else { return String(log[cut...]) }
+            let head = "--- Wine error lines from earlier in this log ---\n" + early.joined(separator: "\n")
+                + "\n--- end of the log ---\n"
+            if head.count + keep <= limit { return head + String(log[cut...]) }
+            if keep == 0 { return String(head.prefix(limit)) }
+            keep = max(0, limit - head.count)
+        }
     }
 
     static var thisMacNames: [String] {

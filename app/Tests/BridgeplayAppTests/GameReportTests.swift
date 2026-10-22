@@ -83,4 +83,18 @@ struct GameReportTests {
         #expect(text.contains("C:/users/crossover/AppData"))
         #expect(text.contains("~/Library/x.lock"))
     }
+
+    @Test("A home folder that isn't spelled like this one's is hidden too")
+    func otherHomes() {
+        let raw = """
+            === exit cause: wine: could not load /Users/josé/Library/x.dll ===
+            lsof: /Users/other/Library/y.lock and /Users/tester/z
+            STEAM_COMPAT_LIBRARY_PATHS=/Users/Shared/SteamLibrary
+            """
+        let text = GameReport.redacted(raw, home: "/Users/tester", user: "tester", computerNames: [])
+        #expect(!text.contains("jos") && !text.contains("other"))
+        #expect(text.contains("load /Users/<user>/Library/x.dll"))
+        #expect(text.contains("lsof: /Users/<user>/Library/y.lock and ~/z"))
+        #expect(text.contains("=/Users/Shared/SteamLibrary"))
+    }
 }
