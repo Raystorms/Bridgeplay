@@ -109,6 +109,65 @@ struct PlayReportsTests {
         #expect(make(String(repeating: "x", count: 3000)).note?.count == 1000)
         #expect(make(nil).setup?["lowPower"] == "off")
     }
+
+    @Test("The run script's exit summary says why the game quit")
+    func exitSummary() throws {
+        let ended = Self.local("Wed Oct 21 20:01:15 2026")
+        let quit = Self.log("""
+            === game exited status=3, killing wine prefix ===
+            === exit summary: exit status 3 after 75s, the game quit by itself (abort() in the C runtime or a breakpoint, usually after the game's own error message) ===
+            === session health: healthy after 75s ===
+            """)
+        let session = try #require(GameSession.last(in: quit, modified: ended))
+        #expect(session.summary(log: quit, wineLog: nil)
+                == "Session 1 min, exit status 3 after 75s, the game quit by itself (abort() in the C runtime or a breakpoint, usually after the game's own error message)")
+
+        let crashed = Self.log("""
+            === game exited status=5, killing wine prefix ===
+            === exit summary: exit status 5 after 12s, the game quit by itself (0xc0000005, an access violation: the game crashed) ===
+            === exit cause: wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger... ===
+            === exit cause: Unhandled exception: page fault on read access to 0x00000000 in 64-bit code (0x0000000140001234). ===
+            """)
+        let crash = try #require(GameSession.last(in: crashed, modified: ended))
+        #expect(crash.summary(log: crashed, wineLog: "no error lines left in this tail")
+                == "Session 1 min, exit status 5 after 12s, the game quit by itself (0xc0000005, an access violation: the game crashed), first Wine error: wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger...")
+    }
+
+    @Test("Without an exit summary the status stands, and Wine's first error is redacted")
+    func exitWithoutSummary() throws {
+        // An earlier run's summary is not this session's.
+        let log = """
+            === bridgeplay run Tue Oct 20 21:00:00 WIB 2026 ===
+            === game exited status=0, killing wine prefix ===
+            === exit summary: exit status 0 after 30 min, the game quit normally ===
+            === bridgeplay run Wed Oct 21 20:00:00 WIB 2026 ===
+            === game exited status=53, killing wine prefix ===
+
+            """
+        let session = try #require(GameSession.last(in: log, modified: Self.local("Wed Oct 21 20:00:10 2026")))
+        #expect(session.exitAccount(in: log) == nil)
+        let wineLog = "fixme:a\n0024:err:module:import_dll Library MSVCP140.dll (which is needed by L\"Z:\\\\Users\\\\someone\\\\Game.exe\") not found\n"
+        #expect(session.summary(log: log, wineLog: wineLog)
+                == "Session 0 min, exit status 53, first Wine error: 0024:err:module:import_dll Library MSVCP140.dll (which is needed by L\"Z:\\\\Users\\\\<user>\\\\Game.exe\") not found")
+        #expect(session.summary(log: log, wineLog: "wine: Unhandled exception, no details") == "Session 0 min, exit status 53, first Wine error: wine: Unhandled exception, no details")
+        #expect(session.summary(log: log, wineLog: nil) == "Session 0 min, exit status 53")
+    }
+
+    @Test("Wine's error lines are found anywhere in the log, once each")
+    func wineErrorLines() {
+        let log = """
+            wine: configuration in L"\\\\??\\\\C:\\\\users\\\\steamuser" has been updated.
+            0118:err:kerberos:kerberos_LsaApInitializePackage no Kerberos support, expect problems
+            wine: Call from 00006FFFFFC3A2B8 to unimplemented function api-ms-win-core-foo.dll.Bar, aborting
+            wine: Call from 00006FFFFFC3A2B8 to unimplemented function api-ms-win-core-foo.dll.Bar, aborting
+            wine client error:3f4: write: Bad file descriptor
+            """
+        #expect(GameReport.wineErrorLines(in: log[...], limit: 5) == [
+            "wine: Call from 00006FFFFFC3A2B8 to unimplemented function api-ms-win-core-foo.dll.Bar, aborting",
+            "wine client error:3f4: write: Bad file descriptor",
+        ])
+        #expect(GameReport.wineErrorLines(in: log[...], limit: 1).count == 1)
+    }
 }
 
 // Answers https://report.invalid/<status> with that status; /offline fails like no network.

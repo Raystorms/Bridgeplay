@@ -35,7 +35,7 @@ struct ReportPayload: Codable, Equatable, Sendable {
                      log: String?, wineLog: String?, machine: GameReport.Machine, install: String,
                      note: String? = nil) -> ReportPayload {
         let launch: (engine: String?, backend: String?) = log.map(GameReport.lastLaunch) ?? (nil, nil)
-        var summary = session.summary(wineLog: wineLog)
+        var summary = session.summary(log: log, wineLog: wineLog)
         if source == .auto { summary += ". Status inferred from the log" }
         return ReportPayload(
             appid: appID, status: status, install: install, source: source, name: name,

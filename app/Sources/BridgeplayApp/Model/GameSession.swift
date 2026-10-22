@@ -76,17 +76,45 @@ struct GameSession: Equatable, Sendable {
         GameSession(id: "by hand", started: nil, ended: now, exitStatus: 0, stoppedBySteam: false, byHand: true)
     }
 
-    // English on purpose: it goes into the public report.
-    func summary(wineLog: String?) -> String {
+    // compat_run.sh's account of how this session ended, from its run block:
+    //   === exit summary: exit status 3 after 75s, the game quit by itself (abort() …) ===
+    //   === exit cause: wine: Unhandled page fault on read access to … ===
+    func exitAccount(in log: String) -> (summary: String, cause: String?)? {
+        guard !byHand, id.hasPrefix("=== "), let start = log.range(of: id, options: .backwards)?.lowerBound else { return nil }
+        var block = log[start...]
+        let rest = block.dropFirst(id.count)
+        if let end = ["\n=== bridgeplay run ", "\n=== notproton run "].compactMap({ rest.range(of: $0)?.lowerBound }).min() {
+            block = block[..<end]
+        }
+        func line(_ tag: String) -> String? {
+            guard let found = block.range(of: "\n=== \(tag): ") else { return nil }
+            let text = block[found.upperBound...].prefix { $0 != "\n" }
+            return String(text.hasSuffix(" ===") ? text.dropLast(4) : text)
+        }
+        guard let summary = line("exit summary") else { return nil }
+        return (summary: summary, cause: line("exit cause"))
+    }
+
+    // English on purpose: it goes into the public report. The exit summary and Wine's first
+    // error line say why the game quit; logs from before the summary give the bare status.
+    func summary(log: String? = nil, wineLog: String?) -> String {
         if byHand { return "Reported from the Prefixes page" }
         var parts: [String] = []
         if let seconds { parts.append("Session \(seconds / 60) min") }
-        if stoppedBySteam {
-            parts.append("stopped from Steam")
+        // The run script already searched the whole Wine log for the cause.
+        let cause: String?
+        if let account = log.flatMap({ exitAccount(in: $0) }) {
+            parts.append(account.summary)
+            cause = account.cause
         } else {
-            parts.append("exit status \(exitStatus)")
+            parts.append(stoppedBySteam ? "stopped from Steam" : "exit status \(exitStatus)")
+            cause = wineLog.flatMap { GameReport.wineErrorLines(in: $0[...], limit: 1).first }
         }
-        if Self.wineCrashed(wineLog) { parts.append("Wine reported an unhandled exception") }
+        if let cause {
+            parts.append("first Wine error: \(GameReport.redacted(cause))")
+        } else if Self.wineCrashed(wineLog) {
+            parts.append("Wine reported an unhandled exception")
+        }
         return parts.joined(separator: ", ")
     }
 }

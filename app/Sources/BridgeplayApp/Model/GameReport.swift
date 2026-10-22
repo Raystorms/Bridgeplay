@@ -115,6 +115,24 @@ enum GameReport {
         return text
     }
 
+    // Wine's lines for a process that crashed or could not start, as exit_crash_lines in
+    // compat_run.sh matches them.
+    static let wineErrorPattern =
+        #"Unhandled (page fault|exception|illegal instruction|stack overflow)|^wine: (Call from|could not|cannot|failed)|err:module:(import_dll|LdrInitializeThunk)|wine client error"#
+
+    static func wineErrorLines(in text: Substring, limit: Int) -> [String] {
+        var found: [String] = []
+        for line in text.split(separator: "\n") where found.count < limit {
+            // The cheap test first: a long log has hundreds of thousands of lines.
+            guard line.contains("Unhandled") || line.hasPrefix("wine: ") || line.contains("err:module:")
+                    || line.contains("wine client error"),
+                  line.range(of: wineErrorPattern, options: .regularExpression) != nil else { continue }
+            let kept = String(line.prefix(300)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !found.contains(kept) { found.append(kept) }
+        }
+        return found
+    }
+
     static var thisMacNames: [String] {
         [SCDynamicStoreCopyComputerName(nil, nil), SCDynamicStoreCopyLocalHostName(nil)]
             .compactMap { $0 as String? }
