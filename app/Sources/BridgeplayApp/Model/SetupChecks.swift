@@ -72,7 +72,12 @@ enum SetupChecks {
     // Downloads Valve's installer image and copies Steam.app into /Applications.
     static func installSteam(to app: URL = SupportPaths.Steam.defaultApp, report: @Sendable (String) -> Void) async throws {
         report(String(localized: "Downloading Steam"))
-        let (download, response) = try await URLSession.shared.download(from: steamInstaller)
+        let host = steamInstaller.host() ?? "Valve"
+        let (download, response) = try await withoutActuallyEscaping(report) { report in
+            let relay = ProgressRelay(host: host) { report($0.label) }
+            defer { relay.finish(); Task { @MainActor in DownloadMeter.shared.clear() } }
+            return try await URLSession.shared.download(from: steamInstaller, delegate: relay)
+        }
         defer { try? FileManager.default.removeItem(at: download) }
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw StepFailure(step: step, detail: "Valve answered \(http.statusCode).")

@@ -1,36 +1,41 @@
 // Download one hash pinned file from a list of CDN hosts
 
+import BridgeplayUI
 import Foundation
+import Observation
 
 enum PinnedDownload {
 
     enum Progress: Sendable {
         case reusing
         case fetching(host: String)
-        case receiving(host: String, received: Int64, total: Int64, remaining: TimeInterval?)
+        case receiving(host: String, received: Int64, total: Int64, remaining: TimeInterval?, speed: Double? = nil)
 
         var label: String {
             switch self {
             case .reusing: String(localized: "Preparing")
             case .fetching(let host): String(localized: "Downloading from \(host)")
-            case .receiving(let host, let received, let total, let remaining):
-                Self.label(host: host, received: received, total: total, remaining: remaining)
+            case .receiving(let host, let received, let total, let remaining, let speed):
+                Self.label(host: host, received: received, total: total, remaining: remaining, speed: speed)
             }
         }
 
-        static func label(host: String, received: Int64, total: Int64, remaining: TimeInterval?) -> String {
-            let amount = ByteCountFormatter.string(fromByteCount: received, countStyle: .file) + " / "
-                + ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+        static func label(host: String, received: Int64, total: Int64, remaining: TimeInterval?, speed: Double? = nil) -> String {
+            let amount = DownloadRate.amount(received: received, total: total, speed: speed)
+            guard let left = remaining.flatMap(duration) else {
+                return String(localized: "Downloading from \(host): \(amount)")
+            }
+            return String(localized: "Downloading from \(host): \(amount), about \(left) left")
+        }
+
+        // "2 minutes"; seconds only near the end, so the estimate doesn't tick every second.
+        static func duration(_ remaining: TimeInterval) -> String? {
             let time = DateComponentsFormatter()
             time.unitsStyle = .full
             time.maximumUnitCount = 1
             time.allowedUnits = [.hour, .minute, .second]
-            // Seconds only near the end, so the estimate doesn't tick every second.
-            let rounded = remaining.map { $0 < 60 ? $0 : ($0 / 60).rounded(.up) * 60 }
-            guard let rounded, let left = time.string(from: max(rounded, 1)) else {
-                return String(localized: "Downloading from \(host): \(amount)")
-            }
-            return String(localized: "Downloading from \(host): \(amount), about \(left) left")
+            let rounded = remaining < 60 ? remaining : (remaining / 60).rounded(.up) * 60
+            return time.string(from: max(rounded, 1))
         }
     }
 
@@ -69,9 +74,22 @@ enum PinnedDownload {
             let body: URL, response: URLResponse
             do {
                 (body, response) = try await withoutActuallyEscaping(report) { report in
-                    let relay = ProgressRelay(host: host, report: report)
-                    defer { relay.finish() }
-                    return try await session.download(from: base.appending(path: file), delegate: relay)
+                    // A dropped connection (or one the server closed during a pause) resumes
+                    // where it stopped rather than starting the 440 MB over.
+                    defer { Task { @MainActor in DownloadMeter.shared.clear() } }
+                    var resumeData: Data?
+                    for attempt in 1... {
+                        let relay = ProgressRelay(host: host, report: report)
+                        defer { relay.finish() }
+                        do {
+                            if let resumeData { return try await session.download(resumeFrom: resumeData, delegate: relay) }
+                            return try await session.download(from: base.appending(path: file), delegate: relay)
+                        } catch let error as URLError where attempt < 4 && error.downloadTaskResumeData != nil {
+                            resumeData = error.downloadTaskResumeData
+                            AppLog.note("\(file) from \(host) interrupted (\(error.localizedDescription)), resuming")
+                        }
+                    }
+                    fatalError("unreachable")
                 }
             } catch {
                 refusals.append("\(host): \(error.localizedDescription)")
@@ -80,7 +98,8 @@ enum PinnedDownload {
             }
             defer { try? FileManager.default.removeItem(at: body) }
 
-            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            // 206: resumed after a dropped connection.
+            if let http = response as? HTTPURLResponse, ![200, 206].contains(http.statusCode) {
                 refusals.append("\(host) answered \(http.statusCode)")
                 kinds.insert(.answered)
                 continue
@@ -130,15 +149,54 @@ enum PinnedDownload {
     }
 }
 
-// Turns the task's byte count into .receiving reports, once per percent.
-private final class ProgressRelay: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+/// The running download, for the bar with its amount, speed and Pause button. Downloads run one at a time.
+@MainActor @Observable
+final class DownloadMeter {
+    static let shared = DownloadMeter()
+    private(set) var host: String?
+    private(set) var received: Int64 = 0
+    private(set) var total: Int64 = 0
+    private(set) var speed: Double?
+    private(set) var remaining: TimeInterval?
+    private(set) var paused = false
+    @ObservationIgnored fileprivate weak var relay: ProgressRelay?
+
+    var fraction: Double? { host != nil && total > 0 ? Double(received) / Double(total) : nil }
+    // "Downloading from github.com", for the row above the bar.
+    var title: String? { host.map { PinnedDownload.Progress.fetching(host: $0).label } }
+
+    func update(host: String, received: Int64, total: Int64, speed: Double?, remaining: TimeInterval?) {
+        self.host = host
+        self.received = received
+        self.total = total
+        self.speed = speed
+        self.remaining = remaining
+    }
+
+    func clear() {
+        host = nil
+        paused = false
+        relay = nil
+    }
+
+    func togglePause() {
+        guard host != nil else { return }
+        paused.toggle()
+        paused ? relay?.suspend() : relay?.resume()
+        AppLog.note("download \(paused ? "paused" : "resumed") at \(received) of \(total) bytes")
+    }
+}
+
+// Turns the task's byte count into .receiving reports, once per percent, and DownloadMeter's bar.
+final class ProgressRelay: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let host: String
     // Dropped by finish(): the caller's closure only lives as long as the download.
     private var report: (@Sendable (PinnedDownload.Progress) -> Void)?
-    private let started = Date()
     private let lock = NSLock()
     private var observation: NSKeyValueObservation?
+    private var task: URLSessionTask?
     private var shown = -1
+    private var rate = DownloadRate()
 
     init(host: String, report: @escaping @Sendable (PinnedDownload.Progress) -> Void) {
         self.host = host
@@ -149,28 +207,42 @@ private final class ProgressRelay: NSObject, URLSessionTaskDelegate, @unchecked 
         let observation = task.progress.observe(\.completedUnitCount) { [weak self] progress, _ in
             self?.update(received: progress.completedUnitCount, total: progress.totalUnitCount)
         }
-        lock.withLock { self.observation = observation }
+        lock.withLock { self.observation = observation; self.task = task }
+        Task { @MainActor in
+            let meter = DownloadMeter.shared
+            meter.relay = self
+            // Paused between a dropped connection and its resume: stay paused.
+            if meter.paused { self.suspend() }
+        }
     }
+
+    func suspend() { lock.withLock { task?.suspend() } }
+    func resume() { lock.withLock { task?.resume() } }
 
     func finish() {
         lock.withLock {
             observation?.invalidate()
             observation = nil
             report = nil
+            task = nil
         }
     }
 
     private func update(received: Int64, total: Int64) {
         guard total > 0, received <= total else { return }
         let percent = Int(received * 100 / total)
-        let elapsed = Date().timeIntervalSince(started)
-        // A few seconds in, so the first estimate isn't wild.
-        let remaining = received > 0 && elapsed > 3 ? elapsed * Double(total - received) / Double(received) : nil
         // Reported under the lock, so finish() can't drop the closure mid-call.
         lock.withLock {
             guard percent != shown, let report else { return }
             shown = percent
-            report(.receiving(host: host, received: received, total: total, remaining: remaining))
+            let speed = rate.add(received)
+            // From the recent speed, so a pause doesn't stretch the estimate.
+            let remaining = speed.flatMap { $0 > 0 ? Double(total - received) / $0 : nil }
+            report(.receiving(host: host, received: received, total: total, remaining: remaining, speed: speed))
+            let host = host
+            Task { @MainActor in
+                DownloadMeter.shared.update(host: host, received: received, total: total, speed: speed, remaining: remaining)
+            }
         }
     }
 }

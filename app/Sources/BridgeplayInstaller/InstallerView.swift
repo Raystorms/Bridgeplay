@@ -148,15 +148,28 @@ struct InstallerView: View {
             SetupCard {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
-                        Text(model.stage == .downloading ? tr("Downloading") : model.componentStatus ?? tr("Verifying and installing"))
+                        if model.paused { Image(systemName: "pause.circle.fill").foregroundStyle(BP.fg2) }
+                        else { ProgressView().controlSize(.small) }
+                        Text(model.stage == .downloading ? (model.paused ? tr("Paused") : tr("Downloading"))
+                             : model.componentStatus ?? tr("Verifying and installing"))
                             .font(BP.sans(13, .semibold))
                     }
                     if model.stage == .downloading {
                         if let value = model.progress {
                             ProgressView(value: min(max(value, 0), 1)).tint(BP.blue)
                         } else { ProgressView().progressViewStyle(.linear).tint(BP.blue) }
-                        Text(model.total.map { "\(bytes(model.received)) / \(bytes($0))" } ?? bytes(model.received))
+                        HStack(spacing: 12) {
+                            Text(DownloadRate.amount(received: model.received, total: model.total, speed: model.paused ? nil : model.speed))
+                                .font(BP.sans(12)).monospacedDigit().foregroundStyle(BP.fg2)
+                            Spacer(minLength: 8)
+                            Button(model.paused ? tr("Resume") : tr("Pause")) { model.togglePause() }
+                                .buttonStyle(.pillSecondary)
+                        }
+                    } else if let meter = model.scriptDownload {
+                        if let total = meter.total {
+                            ProgressView(value: min(max(Double(meter.received) / Double(total), 0), 1)).tint(BP.blue)
+                        } else { ProgressView().progressViewStyle(.linear).tint(BP.blue) }
+                        Text(DownloadRate.amount(received: meter.received, total: meter.total, speed: meter.speed))
                             .font(BP.sans(12)).monospacedDigit().foregroundStyle(BP.fg2)
                     }
                 }

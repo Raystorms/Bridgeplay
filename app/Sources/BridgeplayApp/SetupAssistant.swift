@@ -34,6 +34,8 @@ final class SetupAssistant {
 
     var step: Step = .mac
     var isWorking = false
+    // "Downloading from …: 3 MB / 5 MB · 1.2 MB/s" while Steam downloads.
+    var steamProgress: String?
     var message: String?
 
     // Mac
@@ -119,6 +121,22 @@ final class SetupAssistant {
         try? await Task.sleep(for: .seconds(seconds))
     }
 
+    // Preview only: runs a download's bar from empty to done in about eight seconds; Pause holds it.
+    private func pretendDownload(host: String, total: Int64, _ show: (String?) -> Void) async {
+        let meter = DownloadMeter.shared
+        for step in 0...40 {
+            while meter.paused { await pretend(0.2) }
+            let received = total * Int64(step) / 40
+            let speed = step > 4 ? Double(total) / 8 : nil
+            show(PinnedDownload.Progress.fetching(host: host).label)
+            meter.update(host: host, received: received, total: total, speed: speed,
+                         remaining: speed.map { Double(total - received) / $0 })
+            await pretend(0.2)
+        }
+        show(nil)
+        meter.clear()
+    }
+
     var macReady: Bool { appleSilicon && macOSSupported && rosettaInstalled && hasSpace }
     var hasSpace: Bool { (freeBytes ?? .max) >= SetupChecks.requiredBytes }
 
@@ -184,11 +202,15 @@ final class SetupAssistant {
 
     func installSteam() async {
         isWorking = true
-        defer { isWorking = false }
-        if isPreview { await pretend(); steamInstalled = true; return }
+        defer { isWorking = false; steamProgress = nil }
+        if isPreview {
+            await pretendDownload(host: "cdn.cloudflare.steamstatic.com", total: 4_404_019) { steamProgress = $0 }
+            steamInstalled = true
+            return
+        }
         message = nil
         do {
-            try await SetupChecks.installSteam { _ in }
+            try await SetupChecks.installSteam { label in Task { @MainActor in self.steamProgress = label } }
         } catch {
             message = String(localized: "Steam wasn't installed. \(error.localizedDescription)")
         }
@@ -253,7 +275,11 @@ final class SetupAssistant {
         if isPreview {
             for task in Self.plannedTasks {
                 set(task.id, .running)
-                await pretend(1.2)
+                if task.id == "engine" {
+                    await pretendDownload(host: "github.com", total: 461_373_440) { status.activity = $0 }
+                } else {
+                    await pretend(1.2)
+                }
                 set(task.id, .done)
             }
             step = .done

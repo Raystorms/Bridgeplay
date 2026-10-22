@@ -90,6 +90,11 @@ struct SetupAssistantView: View {
                 .transition(pageTransition)
             }
             .clipped()
+            // Pinned above the footer, so it stays in view however long the step's content is.
+            if DownloadMeter.shared.fraction != nil {
+                Rectangle().fill(BP.line).frame(height: 1)
+                DownloadStrip().padding(.horizontal, 28).padding(.vertical, 12)
+            }
             Rectangle().fill(BP.line).frame(height: 1)
             footer
                 .padding(.horizontal, 24)
@@ -230,7 +235,8 @@ struct SetupAssistantView: View {
                    detail: "Sign in with your account in Steam. Bridgeplay continues on its own once you're in.")
         SetupCard {
             checked(0, StatusRow(title: String(localized: "Steam"),
-                      value: model.steamInstalled ? SupportPaths.Steam.app.path(percentEncoded: false) : String(localized: "Not installed."),
+                      value: model.steamInstalled ? SupportPaths.Steam.app.path(percentEncoded: false)
+                        : DownloadMeter.shared.title ?? model.steamProgress ?? String(localized: "Not installed."),
                       tone: model.steamInstalled ? .ok : .warning,
                       action: model.steamInstalled ? nil : StatusAction(
                         label: String(localized: "Install Steam"), isProminent: true, isEnabled: !model.isWorking
@@ -372,7 +378,7 @@ struct SetupAssistantView: View {
     private func value(of task: SetupAssistant.SetupTask) -> String? {
         switch task.state {
         case .waiting: nil
-        case .running: status.activity ?? String(localized: "Working…")
+        case .running: DownloadMeter.shared.title ?? status.activity ?? String(localized: "Working…")
         case .done: String(localized: "Done.")
         case .failed(let reason): reason
         }
@@ -657,7 +663,7 @@ private struct ToneBadge: View {
     }
 }
 
-private struct GradientProgress: View {
+struct GradientProgress: View {
     let fraction: Double
 
     var body: some View {

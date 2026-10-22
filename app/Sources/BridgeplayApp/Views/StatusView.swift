@@ -319,9 +319,10 @@ struct StatusView: View {
                 HStack(spacing: 10) {
                     ProgressView()
                         .controlSize(.small)
-                    Text(activity)
+                    Text(DownloadMeter.shared.title ?? activity)
                         .foregroundStyle(.secondary)
                 }
+                DownloadStrip()
             }
 
             Section("Steam") {

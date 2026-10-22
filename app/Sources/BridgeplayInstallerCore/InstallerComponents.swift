@@ -69,17 +69,17 @@ public struct InstallerComponents: Sendable, Equatable {
     }
 
     /// Download to a file in `directory` and verify it. Throws without leaving the file on failure.
-    public func download(to directory: URL, session: URLSession = .shared,
+    public func download(to directory: URL, session: URLSession = .shared, control: InstallerDownloadControl? = nil,
                          progress: @escaping @Sendable (InstallerDownloadProgress) -> Void = { _ in }) async throws -> URL {
         var request = URLRequest(url: archiveURL)
         request.timeoutInterval = 60
         let temporary: URL, response: URLResponse
-        do { (temporary, response) = try await InstallerFileDownload.run(request, total: length, progress: progress) }
+        do { (temporary, response) = try await InstallerFileDownload.run(request, total: length, control: control, progress: progress) }
         catch is CancellationError { throw CancellationError() }
         catch { throw InstallerError.networkFailure(error.localizedDescription) }
         let archive = directory.appending(path: "Bridgeplay-Installer.zip")
         do {
-            guard archiveURL.isFileURL || (response as? HTTPURLResponse)?.statusCode == 200 else { throw InstallerError.invalidRelease }
+            guard archiveURL.isFileURL || [200, 206].contains((response as? HTTPURLResponse)?.statusCode) else { throw InstallerError.invalidRelease }
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: archive)
             try FileManager.default.moveItem(at: temporary, to: archive)
@@ -90,6 +90,22 @@ public struct InstallerComponents: Sendable, Equatable {
             throw error
         }
         return archive
+    }
+
+    /// A release replaces the archive, then its .sig, a few seconds apart (release-local.sh
+    /// swap_asset). A download in that gap 404s or fails its check: fetch the .sig again and retry.
+    public func downloadAcrossRelease(to directory: URL, attempts: Int = 3, control: InstallerDownloadControl? = nil,
+                                      progress: @escaping @Sendable (InstallerDownloadProgress) -> Void = { _ in }) async throws -> URL {
+        var components = self
+        for attempt in 1... {
+            do { return try await components.download(to: directory, control: control, progress: progress) }
+            catch let error as InstallerError where attempt < attempts && error.mayBeReleaseSwap {
+                InstallerLog.write("Components \(error), fetching the signature again, try \(attempt + 1) of \(attempts)")
+                try await Task.sleep(for: .seconds(10))
+                components = try await Self.latest()
+            }
+        }
+        fatalError("unreachable")
     }
 
     // CEILING: Ed25519 signs the whole file, so it is mapped and checked at once (~0.5 GB of
@@ -103,7 +119,8 @@ public struct InstallerComponents: Sendable, Equatable {
 
     /// Unpack the verified archive and run its Install.command for Steam, GPTK, the engine and
     /// the configs. `status` gets each "==>" step the script announces.
-    public static func install(archive: URL, work: URL, status: @escaping @Sendable (String) -> Void = { _ in }) throws {
+    public static func install(archive: URL, work: URL, status: @escaping @Sendable (String) -> Void = { _ in },
+                               download: @escaping @Sendable (InstallerDownloadProgress) -> Void = { _ in }) throws {
         let unpacked = work.appending(path: "components")
         try? FileManager.default.removeItem(at: unpacked)
         try FileManager.default.createDirectory(at: unpacked, withIntermediateDirectories: true)
@@ -117,6 +134,7 @@ public struct InstallerComponents: Sendable, Equatable {
         environment["BRIDGEPLAY_NONINTERACTIVE"] = "1"
         try run("/bin/bash", [script.path], environment: environment) { line in
             if line.hasPrefix("==> ") { status(String(line.dropFirst(4))) }
+            else if let meter = InstallerDownloadProgress(curlMeter: line) { download(meter) }
         }
     }
 
@@ -154,6 +172,44 @@ public struct InstallerComponents: Sendable, Equatable {
     }
 }
 
+/// Pauses and resumes the installer's running download. A suspended task sends nothing and
+/// times nothing out; if the server drops the idle connection, the resume picks it up again.
+public final class InstallerDownloadControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionTask?
+    private var paused = false
+
+    public init() {}
+
+    public var isPaused: Bool { lock.withLock { paused } }
+
+    public func pause() {
+        lock.withLock {
+            guard !paused else { return }
+            paused = true
+            task?.suspend()
+        }
+    }
+
+    public func resume() {
+        lock.withLock {
+            guard paused else { return }
+            paused = false
+            task?.resume()
+        }
+    }
+
+    /// Starts the task, or holds it suspended while paused.
+    func start(_ task: URLSessionTask) {
+        lock.withLock {
+            self.task = task
+            if !paused { task.resume() }
+        }
+    }
+
+    func detach() { lock.withLock { task = nil } }
+}
+
 /// Downloads to a file with progress. A task delegate passed to `URLSession.download(for:delegate:)`
 /// gets no progress callbacks, so each download gets its own session with this delegate.
 /// The file is moved out of URLSession's temporary location before the callback returns.
@@ -169,16 +225,46 @@ final class InstallerFileDownload: NSObject, URLSessionDownloadDelegate, @unchec
         self.progress = progress
     }
 
-    static func run(_ request: URLRequest, total: Int64,
+    static let resumableErrors: Set<URLError.Code> = [
+        .networkConnectionLost, .timedOut, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+    ]
+
+    /// A dropped connection resumes where it stopped (#143: 500 MB restarted from zero on each
+    /// try). A resume the server refuses (an expired download link) starts over.
+    static func run(_ request: URLRequest, total: Int64, attempts: Int = 4, control: InstallerDownloadControl? = nil,
                     progress: @escaping @Sendable (InstallerDownloadProgress) -> Void) async throws -> (URL, URLResponse) {
+        var resumeData: Data?
+        for attempt in 1... {
+            do {
+                let (file, response) = try await once(request, resumeData: resumeData, total: total, control: control, progress: progress)
+                let status = (response as? HTTPURLResponse)?.statusCode
+                if resumeData != nil, status != 200, status != 206, attempt < attempts {
+                    try? FileManager.default.removeItem(at: file)
+                    InstallerLog.write("Resume refused (\(status ?? 0)), downloading \(request.url?.lastPathComponent ?? "") again")
+                    resumeData = nil
+                    continue
+                }
+                return (file, response)
+            } catch let error as URLError where attempt < attempts && resumableErrors.contains(error.code) {
+                resumeData = error.downloadTaskResumeData
+                InstallerLog.write("Download interrupted (\(error.localizedDescription)), \(resumeData == nil ? "restarting" : "resuming"), try \(attempt + 1) of \(attempts)")
+                try await Task.sleep(for: .seconds(2 * attempt))
+            }
+        }
+        fatalError("unreachable")
+    }
+
+    private static func once(_ request: URLRequest, resumeData: Data?, total: Int64, control: InstallerDownloadControl?,
+                             progress: @escaping @Sendable (InstallerDownloadProgress) -> Void) async throws -> (URL, URLResponse) {
         let delegate = InstallerFileDownload(total: total, progress: progress)
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
-        let task = session.downloadTask(with: request)
+        defer { control?.detach() }
+        let task = resumeData.map { session.downloadTask(withResumeData: $0) } ?? session.downloadTask(with: request)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 delegate.lock.withLock { delegate.continuation = continuation }
-                task.resume()
+                control?.start(task) ?? task.resume()
             }
         } onCancel: { task.cancel() }
     }

@@ -175,6 +175,7 @@ final class SystemStatus {
     func endRun() {
         generation += 1
         activity = nil
+        DownloadMeter.shared.clear()
         AppLog.note("run end\(failure == nil ? "" : " (failed)")")
     }
 

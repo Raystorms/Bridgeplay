@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import BridgeplayInstallerCore
+import BridgeplayUI
 
 @MainActor
 @Observable
@@ -14,6 +15,12 @@ final class InstallerModel {
     var progress: Double?
     var received: Int64 = 0
     var total: Int64?
+    var speed: Double?
+    var paused = false
+    @ObservationIgnored private var control = InstallerDownloadControl()
+    @ObservationIgnored private var rate = DownloadRate()
+    // Steam downloading inside Install.command, from curl's meter.
+    var scriptDownload: InstallerDownloadProgress?
     var failure: String?
     var openBridgeplay = true
     var removeInstaller = true
@@ -59,8 +66,13 @@ final class InstallerModel {
             switch preview {
             case "update": installedVersion = "3.3.0"; stage = .review
             case "current": installedVersion = version; isCurrent = true; stage = .done
-            case "download": stage = .downloading; received = 31_659_404; total = 79_148_511; progress = 0.4
+            case "download": stage = .downloading; received = 31_659_404; total = 79_148_511; progress = 0.4; speed = 2_412_000
+            case "paused": stage = .downloading; received = 31_659_404; total = 79_148_511; progress = 0.4; paused = true
+            case "components": stage = .downloading; settingUp = true; received = 214_958_080; total = 504_399_923; progress = 0.43; speed = 6_815_744
             case "install": stage = .installing
+            case "steam":
+                stage = .installing; settingUp = true; componentStatus = tr("Installing Steam from Valve")
+                scriptDownload = InstallerDownloadProgress(received: 2_202_009, total: 4_404_019, speed: 1_310_720)
             case "done": stage = .done
             case "error": stage = .failed; failure = tr("The download could not be verified. Your installed application has been kept.")
             default: stage = .review
@@ -116,6 +128,11 @@ final class InstallerModel {
             received = 0
             downloadedBefore = 0
             progress = nil
+            speed = nil
+            rate = DownloadRate()
+            paused = false
+            control = InstallerDownloadControl()
+            let control = self.control
             let work = FileManager.default.temporaryDirectory.appendingPathComponent("bridgeplay-install-\(UUID().uuidString)")
             defer { try? FileManager.default.removeItem(at: work) }
             do {
@@ -124,11 +141,12 @@ final class InstallerModel {
                     Task { @MainActor in
                         guard let self, self.stage == .downloading else { return }
                         self.received = self.downloadedBefore + value.received
+                        if !self.paused { self.speed = self.rate.add(self.received) ?? self.speed }
                         self.progress = self.total.flatMap { $0 > 0 ? Double(self.received) / Double($0) : nil }
                     }
                 }
                 if !isCurrent {
-                    let archive = try await release.download(to: work, progress: report)
+                    let archive = try await release.download(to: work, control: control, progress: report)
                     try Task.checkCancellation()
                     stage = .installing
                     progress = nil
@@ -141,16 +159,18 @@ final class InstallerModel {
                     settingUp = true
                     downloadedBefore = isCurrent ? 0 : release.archiveLength
                     stage = .downloading
-                    let archive = try await components.download(to: work, progress: report)
+                    let archive = try await components.downloadAcrossRelease(to: work, control: control, progress: report)
                     try Task.checkCancellation()
                     stage = .installing
                     progress = nil
                     componentStatus = nil
                     try await Task.detached(priority: .userInitiated) {
-                        try InstallerComponents.install(archive: archive, work: work) { line in
+                        try InstallerComponents.install(archive: archive, work: work, status: { line in
                             InstallerLog.write("Install.command: \(line)")
-                            Task { @MainActor [weak self] in self?.componentStatus = Self.status(line) }
-                        }
+                            Task { @MainActor [weak self] in self?.componentStatus = Self.status(line); self?.scriptDownload = nil }
+                        }, download: { meter in
+                            Task { @MainActor [weak self] in self?.scriptDownload = meter }
+                        })
                     }.value
                     self.components = nil
                 }
@@ -161,6 +181,21 @@ final class InstallerModel {
                 stage = .review
             } catch { fail(error) }
         }
+    }
+
+    func togglePause() {
+        guard stage == .downloading, preview == nil else { paused.toggle(); return }
+        if paused {
+            control.resume()
+            // Count the speed afresh rather than averaging in the pause.
+            rate = DownloadRate()
+            speed = nil
+            InstallerLog.write("Download resumed")
+        } else {
+            control.pause()
+            InstallerLog.write("Download paused at \(received) bytes")
+        }
+        paused = control.isPaused
     }
 
     func cancel() {

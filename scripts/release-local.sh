@@ -265,6 +265,26 @@ fi
 # the Latest release, published just above), so it is uploaded only when its fingerprint,
 # every file it ships, differs from the one on that release.
 installer_tag=installer
+# Replace one asset of an existing release with a gap of about a second. --clobber deletes
+# the old asset before uploading the new one, and installers got 404s for the two minutes
+# the 500 MB zip took (#166). So: upload under a temporary name, delete, rename.
+swap_asset() {
+	swap_tag=$1
+	name=$(basename "$2")
+	staged="$(dirname "$2")/next-$name"
+	# A dry run writes no .sig.
+	[ "$dry_run" -eq 1 ] && { run gh release upload "$swap_tag" "$staged" -R "$slug"; return 0; }
+	cp "$2" "$staged"
+	# A swap interrupted earlier leaves next-<name> behind.
+	gh release delete-asset "$swap_tag" "next-$name" -R "$slug" -y >/dev/null 2>&1 || true
+	gh release upload "$swap_tag" "$staged" -R "$slug"
+	id=$(gh api "repos/$slug/releases/tags/$swap_tag" --jq ".assets[] | select(.name == \"next-$name\") | .id") \
+		&& [ -n "$id" ] || die "uploaded next-$name is missing from the $swap_tag release"
+	gh release delete-asset "$swap_tag" "$name" -R "$slug" -y >/dev/null 2>&1 || true
+	gh api -X PATCH "repos/$slug/releases/assets/$id" -f name="$name" >/dev/null \
+		|| die "could not rename next-$name to $name on the $swap_tag release; rename it on GitHub now"
+	rm -f "$staged"
+}
 installer_fp=$(scripts/package-installer.sh --fingerprint-only | tail -n 1)
 published_fp=$(gh release view "$installer_tag" -R "$slug" --json body -q .body 2>/dev/null \
 	| sed -n 's/^Fingerprint: //p' || true)
@@ -285,8 +305,10 @@ else
 	fi
 	installer_body=$(printf 'The one-click installer behind bridgeplay.dev/download. It downloads the latest Bridgeplay when it runs.\n\nFingerprint: %s\n' "$installer_fp")
 	if gh release view "$installer_tag" -R "$slug" >/dev/null 2>&1; then
-		run gh release upload "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip" \
-			"$out/bridgeplay/Bridgeplay-Installer.zip.sig" -R "$slug" --clobber
+		# The zip first, then its .sig: an installer that reads the new .sig before the new
+		# zip is in place fails its check and retries (InstallerComponents).
+		swap_asset "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip"
+		swap_asset "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip.sig"
 		run gh release edit "$installer_tag" -R "$slug" --notes "$installer_body"
 	else
 		run gh release create "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip" \

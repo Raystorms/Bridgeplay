@@ -4,10 +4,28 @@ import Foundation
 public struct InstallerDownloadProgress: Sendable, Equatable {
     public let received: Int64
     public let total: Int64?
+    /// Bytes per second, when the source reports it (curl's meter).
+    public let speed: Double?
 
-    public init(received: Int64, total: Int64?) {
+    public init(received: Int64, total: Int64?, speed: Double? = nil) {
         self.received = received
         self.total = total
+        self.speed = speed
+    }
+
+    /// One line of curl's progress meter, which Install.command shows while it downloads Steam:
+    /// "  45 4200k   45 1890k    0     0  2105k      0  0:00:01  0:00:00  0:00:01 2105k"
+    public init?(curlMeter line: String) {
+        let fields = line.split(separator: " ")
+        guard fields.count == 12, Int(fields[0]) != nil, let total = Self.curlBytes(fields[1]),
+              let received = Self.curlBytes(fields[3]), let speed = Self.curlBytes(fields[11]) else { return nil }
+        self.init(received: received, total: total > 0 ? total : nil, speed: Double(speed))
+    }
+
+    private static func curlBytes(_ text: Substring) -> Int64? {
+        let units: [Character: Double] = ["k": 1024, "M": 1_048_576, "G": 1_073_741_824]
+        if let unit = text.last.flatMap({ units[$0] }), let value = Double(text.dropLast()) { return Int64(value * unit) }
+        return Int64(text)
     }
 }
 
@@ -134,6 +152,7 @@ public struct InstallerRelease: Sendable, Equatable {
     public func download(
         to destination: URL,
         session: URLSession = .shared,
+        control: InstallerDownloadControl? = nil,
         progress: @escaping @Sendable (InstallerDownloadProgress) -> Void = { _ in }
     ) async throws -> URL {
         guard destination.isFileURL else { throw InstallerError.invalidDestination }
@@ -144,7 +163,7 @@ public struct InstallerRelease: Sendable, Equatable {
         let temporary: URL
         let response: URLResponse
         do {
-            (temporary, response) = try await InstallerFileDownload.run(request, total: archiveLength, progress: progress)
+            (temporary, response) = try await InstallerFileDownload.run(request, total: archiveLength, control: control, progress: progress)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -152,7 +171,8 @@ public struct InstallerRelease: Sendable, Equatable {
         }
         defer { try? FileManager.default.removeItem(at: temporary) }
 
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+        // 206: a resumed download (InstallerFileDownload).
+        guard let http = response as? HTTPURLResponse, [200, 206].contains(http.statusCode),
               let finalURL = http.url, Self.isArchiveResponseURL(finalURL) else {
             throw InstallerError.invalidRelease
         }
@@ -322,6 +342,14 @@ public enum InstallerError: LocalizedError, Sendable {
     case appValidation(String)
     case replacementFailure(String)
     case componentsFailure(String)
+
+    /// What a download caught between a release's archive and .sig swaps fails with.
+    var mayBeReleaseSwap: Bool {
+        switch self {
+        case .invalidRelease, .invalidArchiveLength, .signatureMismatch: true
+        default: false
+        }
+    }
 
     public var errorDescription: String? {
         switch self {

@@ -71,7 +71,7 @@ app_src="$here/Bridgeplay.app"
 if [ "$install_app" = 1 ] && [ ! -d "$app_src" ]; then
     say "Mengunduh Bridgeplay versi terbaru..."
     app_tmp="$(mktemp -d)"
-    curl -fL --retry 3 --connect-timeout 20 --progress-bar -o "$app_tmp/Bridgeplay.zip" "$app_url" \
+    curl -fL --retry 3 --connect-timeout 20 -o "$app_tmp/Bridgeplay.zip" "$app_url" \
         || die "Bridgeplay gagal diunduh. Cek koneksi internet, lalu jalankan Install.command lagi."
     ditto -x -k "$app_tmp/Bridgeplay.zip" "$app_tmp" || die "File Bridgeplay yang diunduh rusak. Jalankan Install.command lagi."
     app_src="$app_tmp/Bridgeplay.app"
@@ -101,7 +101,7 @@ if [ ! -d /Applications/Steam.app ]; then
     say "Steam belum terpasang. Mengunduh installer Steam resmi dari Valve..."
     steam_tmp="$(mktemp -d)" || die "Folder sementara tidak bisa dibuat."
     dmg="$steam_tmp/steam.dmg"
-    curl -fL --retry 3 --connect-timeout 20 --progress-bar -o "$dmg" "$steam_url" \
+    curl -fL --retry 3 --connect-timeout 20 -o "$dmg" "$steam_url" \
         || die "Steam gagal diunduh. Pastikan Mac tersambung ke internet, lalu jalankan Install.command lagi."
     # A UDIF disk image ends with a 512-byte trailer that starts with "koly".
     [ "$(tail -c 512 "$dmg" | head -c 4)" = "koly" ] \
