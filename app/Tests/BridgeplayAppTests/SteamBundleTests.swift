@@ -157,6 +157,48 @@ struct SteamBundleTests {
         #expect(steam.requests == [.exitURL, .quit])
     }
 
+    private let steamFolders = [URL(filePath: "/Applications/Steam.app"),
+                                URL(filePath: "/Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam")]
+
+    @Test("A native game Steam started counts as a running game")
+    func nativeGameIsSeen() {
+        let ps = """
+              1     0 /sbin/launchd
+            100     1 /Applications/Steam.app/Contents/MacOS/steam_osx
+            200   100 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx
+            300   200 /Users/a/Library/Application Support/Steam/steamapps/common/Game/Game.app/Contents/MacOS/Game
+            """
+        #expect(SteamBundle.hasGameChild(processes: ps, steamFolders: steamFolders))
+    }
+
+    @Test("Steam's own helpers and system tools are not games")
+    func helpersAreNotGames() {
+        let ps = """
+            100     1 /Applications/Steam.app/Contents/MacOS/steam_osx
+            200   100 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx
+            210   200 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/ipcserver
+            220   200 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper
+            230   200 /usr/bin/ditto
+            400     1 /Users/a/Games/Other.app/Contents/MacOS/Other
+            """
+        #expect(!SteamBundle.hasGameChild(processes: ps, steamFolders: steamFolders))
+    }
+
+    @Test("A game started through a launch option's shell is still seen")
+    func gameUnderAShellIsSeen() {
+        let ps = """
+            200     1 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx
+            300   200 /bin/sh
+            310   300 /Users/a/.bridgeplay/np-native
+            """
+        #expect(SteamBundle.hasGameChild(processes: ps, steamFolders: steamFolders))
+    }
+
+    @Test("A process list that cannot be read counts as a running game")
+    func unreadableProcessListIsAGame() {
+        #expect(SteamBundle.hasGameChild(steamFolders: steamFolders, ps: "/nonexistent/ps"))
+    }
+
     // steam://exit only reaches this account's Steam; another account's keeps the bundle open.
     @Test("Steam open in another account stops the change without asking this one")
     func otherAccountsSteamIsReported() {

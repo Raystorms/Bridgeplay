@@ -106,6 +106,7 @@ enum SteamBundle {
         var gameRunning: @Sendable () -> Bool = {
             Shell.processIsRunning(named: "wineserver")
                 || RunnerStore.clonedBuilds().contains { RunnerInstaller.isRunning(from: SupportPaths.runnerRoot(forBuild: $0)) }
+                || SteamBundle.hasGameChild()
         }
         var sweep: @Sendable (String) -> Void = { _ = try? Shell.run("/usr/bin/pkill", ["-f", $0]) }
         var pause: @Sendable () -> Void = { Thread.sleep(forTimeInterval: 0.5) }
@@ -166,6 +167,40 @@ enum SteamBundle {
             client.sweep(pattern)
         }
         return true
+    }
+
+    // A native game runs under steam_osx and never shows up as wineserver or a runner.
+    static func hasGameChild(
+        steamFolders: [URL] = [SupportPaths.Steam.app, SupportPaths.Steam.innerApp], ps: String = "/bin/ps"
+    ) -> Bool {
+        guard let result = try? Shell.run(ps, ["-U", String(getuid()), "-ww", "-o", "pid=,ppid=,comm="]),
+              result.succeeded
+        else { return true }
+        return hasGameChild(processes: result.stdout, steamFolders: steamFolders)
+    }
+
+    // ps lines are "pid ppid executable". Steam's helpers and the system tools it runs,
+    // such as the shell a launch option goes through, are not games; anything else
+    // under steam_osx is.
+    static func hasGameChild(processes: String, steamFolders: [URL]) -> Bool {
+        let rows = processes.split(separator: "\n").compactMap { line -> (pid: Substring, ppid: Substring, path: String)? in
+            let fields = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+            guard fields.count == 3 else { return nil }
+            return (fields[0], fields[1], fields[2].trimmingCharacters(in: .whitespaces))
+        }
+        let ownFolders = steamFolders.map { $0.standardizedFileURL.path(percentEncoded: false) }
+            .map { $0.hasSuffix("/") ? $0 : $0 + "/" } + ["/bin/", "/sbin/", "/usr/", "/System/"]
+        var under = Set(rows.filter { ($0.path as NSString).lastPathComponent == "steam_osx" }.map { $0.pid })
+        var found = true
+        while found {
+            found = false
+            for row in rows where under.contains(row.ppid) && !under.contains(row.pid) {
+                if row.path.hasPrefix("/"), !ownFolders.contains(where: { row.path.hasPrefix($0) }) { return true }
+                under.insert(row.pid)
+                found = true
+            }
+        }
+        return false
     }
 
     // Its own type, so a caller that only touches this account's files can carry on.
