@@ -58,7 +58,7 @@ is "an unknown code stays raw" \
 	"$(summary 42 10 0)"
 is "Launch Services hides the game's status" \
 	"=== exit summary: exit status 0 after 10s, started through Launch Services, so the status is open's and not the game's ===" \
-	"$(NOTPROTON_LAUNCH_SERVICES=1; summary 0 10 0)"
+	"$(export NOTPROTON_LAUNCH_SERVICES=1; summary 0 10 0)"
 is "a missing Wine log adds nothing" \
 	"=== exit summary: exit status 5 after 3s, the game quit by itself (likely 0xc0000005, an access violation: the game crashed) ===" \
 	"$(summary 5 3 0 "$work/none.log")"
@@ -82,12 +82,14 @@ is "the first three crash lines follow the summary, then the crash handler" \
 	"$(summary 5 12 0 "$crash")"
 
 odd="$work/odd.log"
-printf 'wine: could not load /Users/jos\303\251/Library/\377x.dll\r\n' > "$odd"
 long=$(printf '%0400d' 0)
-printf 'wine: cannot find %s\n' "$long" >> "$odd"
-printf 'wine: configuration in L"\\\\??\\\\C:\\\\users" has been updated.\n' >> "$odd"
-# The cut falls inside the two bytes of the last character.
-printf 'wine: failed %s\303\251\n' "$(printf '%0286d' 0)" >> "$odd"
+{
+	printf 'wine: could not load /Users/jos\303\251/Library/\377x.dll\r\n'
+	printf 'wine: cannot find %s\n' "$long"
+	printf 'wine: configuration in L"\\\\??\\\\C:\\\\users" has been updated.\n'
+	# The cut falls inside the two bytes of the last character.
+	printf 'wine: failed %s\303\251\n' "$(printf '%0286d' 0)"
+} > "$odd"
 lines=$(exit_crash_lines "$odd")
 is "a home folder keeps its accents for redaction; invalid bytes and carriage returns go" \
 	"wine: could not load /Users/josé/Library/x.dll" "$(printf '%s\n' "$lines" | sed -n 1p)"

@@ -1325,12 +1325,12 @@ exit_signal() {
 }
 
 # The lines Wine prints when a process dies or cannot start. iconv drops invalid bytes, so
-# the run log stays UTF-8 for the app, and keeps a home folder like /Users/josé whole for
+# the run log stays UTF-8 for the app, and keeps a home folder with an accented name whole for
 # the report's redaction to match.
 exit_crash_lines() {
   [ -f "$1" ] || return 0
   grep -a -E -m 3 'Unhandled (page fault|exception|illegal instruction|stack overflow)|^wine: (Call from|could not|cannot|failed)|err:module:(import_dll|LdrInitializeThunk)|wine client error' \
-    "$1" 2>/dev/null | LC_ALL=C tr -d '\0-\10\13-\37\177' | cut -c 1-300 | iconv -c -f UTF-8 -t UTF-8 2>/dev/null || true
+    "$1" 2>/dev/null | LC_ALL=C tr -d '\0-\10\13-\37\177' | LC_ALL=C cut -b 1-300 | iconv -c -f UTF-8 -t UTF-8 2>/dev/null || true
 }
 
 # How the game ended, in one line, plus Wine's crash lines. GameSession.swift reads these
