@@ -133,6 +133,18 @@ enum GameReport {
         return found
     }
 
+    // The newest `limit` characters of a Wine log. Wine's error lines from the part that
+    // doesn't fit go first, so a crash early in a long session still reaches the report.
+    static func wineTail(_ log: String, limit: Int) -> String {
+        guard log.count > limit else { return log }
+        let cut = log.index(log.endIndex, offsetBy: -limit)
+        let early = wineErrorLines(in: log[..<cut], limit: 20)
+        guard !early.isEmpty else { return String(log[cut...]) }
+        let head = "--- Wine error lines from earlier in this log ---\n" + early.joined(separator: "\n")
+            + "\n--- end of the log ---\n"
+        return head + String(log.suffix(max(0, limit - head.count)))
+    }
+
     static var thisMacNames: [String] {
         [SCDynamicStoreCopyComputerName(nil, nil), SCDynamicStoreCopyLocalHostName(nil)]
             .compactMap { $0 as String? }

@@ -168,6 +168,19 @@ struct PlayReportsTests {
         ])
         #expect(GameReport.wineErrorLines(in: log[...], limit: 1).count == 1)
     }
+
+    @Test("A crash early in a long Wine log still reaches the report")
+    func wineTail() {
+        let early = "wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger...\n"
+        let log = "fixme:a\n" + early + String(repeating: "trace line\n", count: 50_000) + "last line\n"
+        let tail = GameReport.wineTail(log, limit: 1000)
+        #expect(tail.count == 1000)
+        #expect(tail.hasPrefix("--- Wine error lines from earlier in this log ---\n" + early + "--- end of the log ---\n"))
+        #expect(tail.hasSuffix("trace line\nlast line\n"))
+        #expect(GameReport.wineTail("short\n", limit: 1000) == "short\n")
+        let quiet = String(repeating: "x\n", count: 1000)
+        #expect(GameReport.wineTail(quiet, limit: 100) == String(quiet.suffix(100)))
+    }
 }
 
 // Answers https://report.invalid/<status> with that status; /offline fails like no network.

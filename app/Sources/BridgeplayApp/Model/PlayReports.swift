@@ -45,7 +45,7 @@ struct ReportPayload: Codable, Equatable, Sendable {
             note: note.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : String($0.prefix(1000)) },
             setup: machine.setup.isEmpty ? nil : machine.setup,
             log: log.map { String(GameReport.redacted($0).suffix(logLimit)) },
-            wineLog: wineLog.map { String(GameReport.redacted($0).suffix(wineLogLimit)) })
+            wineLog: wineLog.map { GameReport.wineTail(GameReport.redacted($0), limit: wineLogLimit) })
     }
 }
 
