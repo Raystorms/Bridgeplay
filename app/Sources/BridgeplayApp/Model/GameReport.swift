@@ -107,7 +107,7 @@ enum GameReport {
             // Wine's view of a home folder whose name differs from the account name.
             (#"(?i)\b([A-Za-z]:\\+Users\\+)(?!(?:crossover|public|steamuser)\b)[^\\\s:'"]+"#, "$1<user>"),
             // Any other Mac home folder: another account, or the home path spelled differently.
-            (#"(?<![\w.~])/Users/(?!Shared\b)[^/\s:'"]+"#, "/Users/<user>"),
+            (#"(?<![\w.~])/Users/(?!Shared(?=[/\s:'"]|$))[^/\s:'"]+"#, "/Users/<user>"),
         ]
         for name in [user] + computerNames where name.count >= 3 {
             text = text.replacingOccurrences(of: #"\b\#(NSRegularExpression.escapedPattern(for: name))\b"#,

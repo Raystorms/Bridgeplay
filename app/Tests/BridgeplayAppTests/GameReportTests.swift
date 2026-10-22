@@ -90,9 +90,13 @@ struct GameReportTests {
             === exit cause: wine: could not load /Users/josé/Library/x.dll ===
             lsof: /Users/other/Library/y.lock and /Users/tester/z
             STEAM_COMPAT_LIBRARY_PATHS=/Users/Shared/SteamLibrary
+            accounts named like it: /Users/Shared-jane/a /Users/Shared.work/b
+            only the folder: /Users/Shared
             """
         let text = GameReport.redacted(raw, home: "/Users/tester", user: "tester", computerNames: [])
-        #expect(!text.contains("jos") && !text.contains("other"))
+        #expect(!text.contains("jos") && !text.contains("other") && !text.contains("jane") && !text.contains("work"))
+        #expect(text.contains("like it: /Users/<user>/a /Users/<user>/b"))
+        #expect(text.contains("only the folder: /Users/Shared"))
         #expect(text.contains("load /Users/<user>/Library/x.dll"))
         #expect(text.contains("lsof: /Users/<user>/Library/y.lock and ~/z"))
         #expect(text.contains("=/Users/Shared/SteamLibrary"))
