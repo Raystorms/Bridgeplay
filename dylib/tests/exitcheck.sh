@@ -30,10 +30,10 @@ summary() { exit_summary "$1" "$2" "$3" "${4:-$clean}"; }
 
 echo "== how the game ended =="
 is "abort() after the game's own dialog (Mewgenics)" \
-	"=== exit summary: exit status 3 after 75s, the game quit by itself (abort() in the C runtime or a breakpoint, usually after the game's own error message) ===" \
+	"=== exit summary: exit status 3 after 75s, the game quit by itself (likely abort() in the C runtime or a breakpoint, usually after the game's own error message) ===" \
 	"$(summary 3 75 0)"
 is "exit -1 (SCP: Containment Breach)" \
-	"=== exit summary: exit status 255 after 19s, the game quit by itself (exit code -1, a failure the game reported itself) ===" \
+	"=== exit summary: exit status 255 after 19s, the game quit by itself (likely exit code -1, a failure the game reported itself) ===" \
 	"$(summary 255 19 0)"
 is "a quick clean quit is suspicious (Plants vs. Zombies)" \
 	"=== exit summary: exit status 0 after 24s, the game quit by itself within a minute without an error code, usually after its own error message ===" \
@@ -45,13 +45,13 @@ is "Steam's Exit Game wins over the status" \
 	"=== exit summary: exit status 143 after 6s, stopped from Steam ===" \
 	"$(summary 143 6 1)"
 is "SIGTERM from outside Steam" \
-	"=== exit summary: exit status 143 after 30s, Wine was killed by SIGTERM, asked to quit from outside Steam ===" \
+	"=== exit summary: exit status 143 after 30s, Wine was likely killed by SIGTERM, asked to quit from outside Steam ===" \
 	"$(summary 143 30 0)"
 is "a Mac-side crash is a signal, not a Windows code" \
-	"=== exit summary: exit status 139 after 5s, Wine was killed by SIGSEGV, a crash in Mac-side code such as Wine, D3DMetal or MoltenVK ===" \
+	"=== exit summary: exit status 139 after 5s, Wine was likely killed by SIGSEGV, a crash in Mac-side code such as Wine, D3DMetal or MoltenVK ===" \
 	"$(summary 139 5 0)"
 is "the low byte of 0xc0000135" \
-	"=== exit summary: exit status 53 after 2s, the game quit by itself (0xc0000135, a DLL the game needs was not found) ===" \
+	"=== exit summary: exit status 53 after 2s, the game quit by itself (likely 0xc0000135, a DLL the game needs was not found) ===" \
 	"$(summary 53 2 0)"
 is "an unknown code stays raw" \
 	"=== exit summary: exit status 42 after 10s, the game quit by itself ===" \
@@ -60,7 +60,7 @@ is "Launch Services hides the game's status" \
 	"=== exit summary: exit status 0 after 10s, started through Launch Services, so the status is open's and not the game's ===" \
 	"$(NOTPROTON_LAUNCH_SERVICES=1; summary 0 10 0)"
 is "a missing Wine log adds nothing" \
-	"=== exit summary: exit status 5 after 3s, the game quit by itself (0xc0000005, an access violation: the game crashed) ===" \
+	"=== exit summary: exit status 5 after 3s, the game quit by itself (likely 0xc0000005, an access violation: the game crashed) ===" \
 	"$(summary 5 3 0 "$work/none.log")"
 
 echo "== Wine's crash lines =="
@@ -74,7 +74,7 @@ crash="$work/crash.log"
 	printf 'wine: Unhandled page fault again\n'
 } > "$crash"
 is "the first three crash lines follow the summary, then the crash handler" \
-	"=== exit summary: exit status 5 after 12s, the game quit by itself (0xc0000005, an access violation: the game crashed) ===
+	"=== exit summary: exit status 5 after 12s, the game quit by itself (likely 0xc0000005, an access violation: the game crashed) ===
 === exit cause: 0024:err:module:import_dll Library MSVCP140.dll (which is needed by L\"Z:\\\\Users\\\\someone\\\\Game.exe\") not found ===
 === exit cause: wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger... ===
 === exit cause: Unhandled exception: page fault on read access to 0x00000000 in 64-bit code (0x0000000140001234). ===
@@ -82,15 +82,18 @@ is "the first three crash lines follow the summary, then the crash handler" \
 	"$(summary 5 12 0 "$crash")"
 
 odd="$work/odd.log"
-printf 'wine: could not load \303\251t\303\251.dll\r\n' > "$odd"
+printf 'wine: could not load /Users/jos\303\251/Library/\377x.dll\r\n' > "$odd"
 long=$(printf '%0400d' 0)
 printf 'wine: cannot find %s\n' "$long" >> "$odd"
 printf 'wine: configuration in L"\\\\??\\\\C:\\\\users" has been updated.\n' >> "$odd"
+# The cut falls inside the two bytes of the last character.
+printf 'wine: failed %s\303\251\n' "$(printf '%0286d' 0)" >> "$odd"
 lines=$(exit_crash_lines "$odd")
-is "non-ASCII and carriage returns are dropped, Wine's routine notes are not crash lines" \
-	"wine: could not load t.dll" "$(printf '%s\n' "$lines" | sed -n 1p)"
+is "a home folder keeps its accents for redaction; invalid bytes and carriage returns go" \
+	"wine: could not load /Users/josé/Library/x.dll" "$(printf '%s\n' "$lines" | sed -n 1p)"
 is "a long line is cut" 300 "$(printf '%s\n' "$lines" | sed -n 2p | tr -d '\n' | wc -c | tr -d ' ')"
-is "only crash lines are kept" 2 "$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
+is "only crash lines are kept" 3 "$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
+is "what is kept is valid UTF-8" yes "$(printf '%s\n' "$lines" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 && echo yes || echo no)"
 
 if [ "$fails" -ne 0 ]; then
 	echo "exitcheck: $fails failure(s)"

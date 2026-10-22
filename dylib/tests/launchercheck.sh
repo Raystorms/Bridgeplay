@@ -285,8 +285,8 @@ start=$(date +%s)
 rc=0; sh "$T/session.sh" 3 7 || rc=$?
 is "the shim's exit status is the session's" 7 "$rc"
 is "the session waits for the shim" yes "$([ $(($(date +%s) - start)) -ge 3 ] && echo yes || echo no)"
-is "the exit is summed up, then the prefix is torn down once" "summary 7 0
-kill" "$(cat "$T/session.ev")"
+is "the prefix is torn down once, then the exit is summed up" "kill
+summary 7 0" "$(cat "$T/session.ev")"
 : > "$T/session.ev"
 start=$(date +%s)
 sh "$T/session.sh" 30 0 & sp=$!

@@ -1288,7 +1288,8 @@ record_session() {
 }
 
 # Wine exits with the low byte of the Windows exit code, so 0xc0000005 arrives as 5 and
-# 0xc0000135 as 53. Codes not listed stay raw.
+# 0xc0000135 as 53. A game can also exit with that number itself, so the summary says
+# "likely". Codes not listed stay raw.
 exit_meaning() {
   case "$1" in
     1) echo "a generic failure, from the game or from Wine starting it" ;;
@@ -1323,12 +1324,13 @@ exit_signal() {
   esac
 }
 
-# The lines Wine prints when a process dies or cannot start, ASCII only so the run log
-# stays valid UTF-8 for the app.
+# The lines Wine prints when a process dies or cannot start. iconv drops invalid bytes, so
+# the run log stays UTF-8 for the app, and keeps a home folder like /Users/josé whole for
+# the report's redaction to match.
 exit_crash_lines() {
   [ -f "$1" ] || return 0
   grep -a -E -m 3 'Unhandled (page fault|exception|illegal instruction|stack overflow)|^wine: (Call from|could not|cannot|failed)|err:module:(import_dll|LdrInitializeThunk)|wine client error' \
-    "$1" 2>/dev/null | LC_ALL=C tr -cd '\11\12\40-\176' | cut -c 1-300
+    "$1" 2>/dev/null | LC_ALL=C tr -d '\0-\10\13-\37\177' | cut -c 1-300 | iconv -c -f UTF-8 -t UTF-8 2>/dev/null || true
 }
 
 # How the game ended, in one line, plus Wine's crash lines. GameSession.swift reads these
@@ -1342,13 +1344,13 @@ exit_summary() {
   elif [ "${NOTPROTON_LAUNCH_SERVICES:-0}" = 1 ]; then
     es_how="started through Launch Services, so the status is open's and not the game's"
   elif [ -n "$es_signal" ]; then
-    es_how="Wine was killed by $es_signal"
+    es_how="Wine was likely killed by $es_signal"
   elif [ "$1" = 0 ] && [ "$2" -lt 60 ]; then
     es_how="the game quit by itself within a minute without an error code, usually after its own error message"
   elif [ "$1" = 0 ]; then
     es_how="the game quit normally"
   elif [ -n "$es_meaning" ]; then
-    es_how="the game quit by itself ($es_meaning)"
+    es_how="the game quit by itself (likely $es_meaning)"
   else
     es_how="the game quit by itself"
   fi
@@ -2855,11 +2857,12 @@ open_pid=$!
 /usr/bin/caffeinate -d -i -w "$open_pid" >> "$log" 2>&1 &
 status=0
 wait "$open_pid" || status=$?
+np_ran=$(($(date +%s) - np_started))
 echo "=== game exited status=$status, killing wine prefix ===" >> "$log" 2>&1 || true
-exit_summary "$status" "$(($(date +%s) - np_started))" "$np_terminated" "$loader_root/bridgeplay-wine.log" \
-  >> "$log" 2>&1 || true
 kill_wine_prefix
 [ -z "$STEAM_COMPAT_DATA_PATH" ] \
   || record_session "$loader_root/bridgeplay-wine.log" "$(($(date +%s) - np_started))" "$np_terminated"
+# After the teardown, so reading a long Wine log never holds the prefix up.
+exit_summary "$status" "$np_ran" "$np_terminated" "$loader_root/bridgeplay-wine.log" >> "$log" 2>&1 || true
 echo "=== wine prefix killed, session ending ===" >> "$log" 2>&1 || true
 exit $status
