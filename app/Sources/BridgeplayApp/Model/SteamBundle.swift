@@ -1,5 +1,6 @@
 // Steam app bundle patching component
 
+import AppKit
 import Foundation
 
 enum SteamDeployment: Sendable, Equatable {
@@ -91,14 +92,32 @@ enum SteamBundle {
         var runningAnywhere: @Sendable () -> Bool = { SteamBundle.isRunning }
         var runningHere: @Sendable () -> Bool = { SteamBundle.isRunningForThisUser }
         var askToQuit: @Sendable () -> Void = { _ = try? Shell.run("/usr/bin/open", ["-g", "steam://exit"]) }
+        // The quit the Dock sends. NSWorkspace lists only this account's apps.
+        var requestQuit: @Sendable () -> Void = {
+            for steam in NSWorkspace.shared.runningApplications
+            where steam.executableURL?.lastPathComponent == "steam_osx" {
+                steam.terminate()
+            }
+        }
+        // SIGTERM, which Steam can still handle, to this account's Steam only.
+        var terminate: @Sendable () -> Void = {
+            _ = try? Shell.run("/usr/bin/pkill", ["-TERM", "-x", "-U", String(getuid()), "steam_osx"])
+        }
+        var gameRunning: @Sendable () -> Bool = {
+            Shell.processIsRunning(named: "wineserver")
+                || RunnerStore.clonedBuilds().contains { RunnerInstaller.isRunning(from: SupportPaths.runnerRoot(forBuild: $0)) }
+        }
         var sweep: @Sendable (String) -> Void = { _ = try? Shell.run("/usr/bin/pkill", ["-f", $0]) }
         var pause: @Sendable () -> Void = { Thread.sleep(forTimeInterval: 0.5) }
-        var attempts = 60
+        var attempts = 40
+        var escalationAttempts = 20
     }
 
-    // Asks this account's Steam to quit and waits up to 30 seconds. Steam is never killed:
-    // it may be writing its config or an update, so a Steam that stays open is reported
-    // instead. A Steam another account runs is out of reach and reported as such.
+    // Asks this account's Steam to quit with steam://exit, which Steam can ignore on its
+    // login or update screen, then with a macOS quit, then with SIGTERM. Steam is never
+    // killed: it may be writing its config or an update. SIGTERM is skipped while a game
+    // runs, so Steam can still sync its saves. A Steam another account runs is out of
+    // reach and reported as such.
     static func stopClient(
         app: URL = SupportPaths.Steam.app,
         helpers: [URL] = [SupportPaths.Steam.innerApp],
@@ -110,15 +129,35 @@ enum SteamBundle {
         guard client.runningHere() else { throw OpenInAnotherAccount(step: step) }
         onStopping()
 
+        func quits(within attempts: Int) -> Bool {
+            for _ in 0..<attempts where client.runningHere() {
+                client.pause()
+            }
+            return !client.runningHere()
+        }
         client.askToQuit()
-        for _ in 0..<client.attempts where client.runningHere() {
-            client.pause()
+        var quit = quits(within: client.attempts)
+        if !quit {
+            AppLog.note("stop: Steam ignored steam://exit, asking macOS to quit it")
+            client.requestQuit()
+            quit = quits(within: client.escalationAttempts)
+        }
+        if !quit {
+            if client.gameRunning() {
+                throw StepFailure(
+                    step: step,
+                    detail: String(localized: "Steam did not quit while a game is running. Quit the game, then choose Steam > Quit Steam and try again.")
+                )
+            }
+            AppLog.note("stop: Steam ignored the quit request, sending SIGTERM")
+            client.terminate()
+            quit = quits(within: client.escalationAttempts)
         }
 
-        guard !client.runningHere() else {
+        guard quit else {
             throw StepFailure(
                 step: step,
-                detail: String(localized: "Steam did not quit. Quit Steam, then try again.")
+                detail: String(localized: "Steam did not quit. Choose Steam > Quit Steam, then try again. If Steam does not respond, quit it in Activity Monitor.")
             )
         }
         guard !client.runningAnywhere() else { throw OpenInAnotherAccount(step: step) }

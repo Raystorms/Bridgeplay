@@ -8261,18 +8261,34 @@
         }
       }
     },
-    "Steam did not quit. Quit Steam, then try again." : {
+    "Steam did not quit while a game is running. Quit the game, then choose Steam > Quit Steam and try again." : {
       "localizations" : {
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Steam non si è chiuso. Chiudi Steam, poi riprova."
+            "value" : "Steam non si è chiuso mentre è in esecuzione un gioco. Chiudi il gioco, poi scegli Steam > Esci da Steam e riprova."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Steam 未能退出。请退出 Steam 后重试。"
+            "value" : "游戏运行期间 Steam 未能退出。请先退出游戏，然后选择“Steam”>“退出 Steam”并重试。"
+          }
+        }
+      }
+    },
+    "Steam did not quit. Choose Steam > Quit Steam, then try again. If Steam does not respond, quit it in Activity Monitor." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam non si è chiuso. Scegli Steam > Esci da Steam, poi riprova. Se Steam non risponde, chiudilo da Monitoraggio Attività."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam 未能退出。请选择“Steam”>“退出 Steam”，然后重试。如果 Steam 没有响应，请在“活动监视器”中退出它。"
           }
         }
       }
