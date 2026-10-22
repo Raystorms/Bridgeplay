@@ -13,7 +13,7 @@ case "$body" in
 esac
 body="$body"'
 notify_user() { printf "%s|%s\n" "$1" "$2" >> "$notes"; }
-pmset() { [ "$1" = -g ] || return 1; [ -n "$pm" ] || return 1; printf "%s\n" "$pm"; }'
+pmset() { [ "$1" = -g ] || return 1; [ -z "$during" ] || eval "$during"; [ -n "$pm" ] || return 1; printf "%s\n" "$pm"; }'
 
 # a failed mktemp must not leave work at the current folder, which the trap deletes
 work=$(mktemp -d) && work=$(cd "$work" && pwd -P) || exit 1
@@ -26,7 +26,7 @@ is() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
 has() { if grep -qF -- "$2" "$3"; then ok "$1"; else bad "$1" "$2" "$(cat "$3")"; fi; }
 
 support="$work/Application Support/bridgeplay"
-mkdir -p "$support"
+mkdir -p "$support" "$work/tmp"
 mark="$support/low-power-noticed"
 
 # pmset -g as macOS prints it, with the power mode line given
@@ -36,10 +36,12 @@ pmset_g() {
 
 mode() { env pm="$1" body="$body" sh -ec 'eval "$body"; low_power_mode'; }
 
-run() { # run PMSET_OUTPUT [VERB]: one launch, waits for the notice beside it
+run() { # run PMSET_OUTPUT [VERB [DURING]]: one launch, waits for the notice beside it.
+  # DURING runs while pmset is read, as another launch would.
   : > "$work/log"
   : > "$work/notes"
   env log="$work/log" notes="$work/notes" np_support="$support" pm="$1" verb="${2:-waitforexitandrun}" \
+    during="${3:-}" TMPDIR="$work/tmp" \
     body="$body" sh -ec 'eval "$body"; low_power_notice; wait'
 }
 
@@ -73,6 +75,21 @@ is "Low Power Mode off says nothing" "" "$(cat "$work/notes" "$work/log")"
 is "Low Power Mode off ends the session" no "$([ -e "$mark" ] && echo yes || echo no)"
 run "$on"
 has "the next session notifies again" "Low Power Mode is on|" "$work/notes"
+
+echo "== a launch that reads off while another one notifies"
+rm -f "$mark"
+run "$off" waitforexitandrun ': > "$mark"'
+is "a mark made while off was read stays" yes "$([ -e "$mark" ] && echo yes || echo no)"
+touch -t 202001010000 "$mark"
+run "$off" waitforexitandrun 'rm -f "$mark"; : > "$mark"'
+is "a mark made again while off was read stays" yes "$([ -e "$mark" ] && echo yes || echo no)"
+touch -t 202001010000 "$mark"
+run "$off"
+is "a mark from before the read goes" no "$([ -e "$mark" ] && echo yes || echo no)"
+: > "$mark"
+run "$on"
+run "$off"
+is "no temporary files are left" "" "$(ls -A "$work/tmp")"
 
 echo "== launches that are not the game"
 rm -f "$mark"
