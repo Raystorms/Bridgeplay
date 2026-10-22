@@ -19,12 +19,15 @@ enum GameReport {
         var macOS: String
         var bridgeplay: String
         var setup: [String: String] = [:]
+        // A newer release the updater found, "0.7.38 (55)".
+        var newerRelease: String?
     }
 
     static var thisMac: Machine {
         Machine(chip: SetupChecks.chipName, memoryBytes: ProcessInfo.processInfo.physicalMemory,
                 macOS: SetupChecks.macOSDisplay,
-                bridgeplay: ProductVersion.build.map { "\(ProductVersion.short) (\($0))" } ?? ProductVersion.short)
+                bridgeplay: ProductVersion.build.map { "\(ProductVersion.short) (\($0))" } ?? ProductVersion.short,
+                newerRelease: LatestRelease.newer(than: ProductVersion.build))
     }
 
     // Facts about the Mac when the report is made, which is soon after the game ran:

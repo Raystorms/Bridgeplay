@@ -181,6 +181,29 @@ struct PlayReportsTests {
         let quiet = String(repeating: "x\n", count: 1000)
         #expect(GameReport.wineTail(quiet, limit: 100) == String(quiet.suffix(100)))
     }
+
+    @Test("A report says when a newer Bridgeplay was out")
+    func newerRelease() throws {
+        let name = "latest-release-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        #expect(LatestRelease.newer(than: "44", defaults: defaults) == nil)
+        LatestRelease.record(build: "55", version: "0.7.38", defaults: defaults)
+        #expect(LatestRelease.newer(than: "44", defaults: defaults) == "0.7.38 (55)")
+        #expect(LatestRelease.newer(than: "55", defaults: defaults) == nil)
+        #expect(LatestRelease.newer(than: "56", defaults: defaults) == nil)
+        #expect(LatestRelease.newer(than: nil, defaults: defaults) == nil, "an unstamped build")
+
+        var machine = GameReport.Machine(chip: "Apple M2", memoryBytes: 8 * 1_073_741_824,
+                                         macOS: "macOS 27.0.1", bridgeplay: "0.7.0 (44)")
+        machine.newerRelease = "0.7.38 (55)"
+        let session = GameSession(id: "x", started: Date().addingTimeInterval(-27 * 60), ended: Date(),
+                                  exitStatus: 0, stoppedBySteam: false)
+        let payload = ReportPayload.make(name: "Roboquest", appID: "692890", status: .bronze, source: .tap,
+                                         session: session, log: nil, wineLog: nil, machine: machine,
+                                         install: "0F8FAD5B-D9CB-469F-A165-70867728950E")
+        #expect(payload.session == "Session 27 min, exit status 0. A newer Bridgeplay was out: 0.7.38 (55)")
+    }
 }
 
 // Answers https://report.invalid/<status> with that status; /offline fails like no network.

@@ -36,6 +36,7 @@ struct ReportPayload: Codable, Equatable, Sendable {
                      note: String? = nil) -> ReportPayload {
         let launch: (engine: String?, backend: String?) = log.map(GameReport.lastLaunch) ?? (nil, nil)
         var summary = session.summary(log: log, wineLog: wineLog)
+        if let newer = machine.newerRelease { summary += ". A newer Bridgeplay was out: \(newer)" }
         if source == .auto { summary += ". Status inferred from the log" }
         return ReportPayload(
             appid: appID, status: status, install: install, source: source, name: name,
