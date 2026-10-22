@@ -1063,21 +1063,19 @@ low_power_notice() {
   (
     exec 8>&- 9>&-
     mark="$np_support/low-power-noticed"
-    # A launch that read "off" just before another one notified must not take that newer mark
-    # away, so "off" removes only a mark older than this read of pmset.
-    seen=""
-    [ ! -e "$mark" ] || seen=$(mktemp "${TMPDIR:-/tmp}/bridgeplay-low-power.XXXXXX") || seen=""
+    # Games starting together read pmset and change the mark one at a time, so a launch that
+    # read "off" cannot remove a mark made after its read. No lock means no notice.
+    exec 7>> "$np_support/.low-power.lock" && /usr/bin/lockf -s -t 5 7 || exit 0
+    tell=""
     case "$(low_power_mode)" in
-      0) [ -z "$seen" ] || [ -z "$(find "$mark" ! -newer "$seen" 2>/dev/null)" ] || rm -f "$mark" ;;
+      0) rm -f "$mark" ;;
       1)
         echo "power: Low Power Mode is on" >> "$log" 2>&1 || true
-        # noclobber creates the mark only if it is not there, so two games starting together notify once
-        if (set -C; : > "$mark") 2>/dev/null; then
-          notify_user "Low Power Mode is on" "Games run slower while it is on. Turn it off in System Settings > Battery, or Energy on a desktop Mac."
-        fi
+        [ -e "$mark" ] || { : > "$mark" && tell=1; } || true
         ;;
     esac
-    [ -z "$seen" ] || rm -f "$seen"
+    exec 7>&-
+    [ -z "$tell" ] || notify_user "Low Power Mode is on" "Games run slower while it is on. Turn it off in System Settings > Battery, or Energy on a desktop Mac."
   ) >/dev/null 2>&1 &
 }
 
