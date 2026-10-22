@@ -48,24 +48,21 @@ struct SteamBundleTests {
 
     // MARK: Stopping Steam
 
-    // A stand-in Steam: running here and in another account, which request it quits on,
-    // and whether a game is running.
+    // A stand-in Steam: running here and in another account, and which request it quits on.
     private final class FakeSteam: @unchecked Sendable {
-        enum Request: Comparable { case exitURL, quit, terminate, never }
+        enum Request: Comparable { case exitURL, quit, never }
 
         private let lock = NSLock()
         private var here: Bool
         private var elsewhere: Bool
         private let quitsOn: Request
-        private let game: Bool
         private(set) var requests: [Request] = []
         private(set) var swept: [String] = []
 
-        init(here: Bool, elsewhere: Bool = false, quitsOn: Request = .exitURL, game: Bool = false) {
+        init(here: Bool, elsewhere: Bool = false, quitsOn: Request = .exitURL) {
             self.here = here
             self.elsewhere = elsewhere
             self.quitsOn = quitsOn
-            self.game = game
         }
 
         private func receive(_ request: Request) {
@@ -81,8 +78,6 @@ struct SteamBundleTests {
                 runningHere: { self.lock.withLock { self.here } },
                 askToQuit: { self.receive(.exitURL) },
                 requestQuit: { self.receive(.quit) },
-                terminate: { self.receive(.terminate) },
-                gameRunning: { self.game },
                 sweep: { pattern in self.lock.withLock { self.swept.append(pattern) } },
                 pause: {},
                 attempts: 3,
@@ -112,7 +107,7 @@ struct SteamBundleTests {
     }
 
     // Issue #158: Steam on its login or update screen ignored steam://exit.
-    @Test("Steam that ignores steam://exit gets a macOS quit before anything harsher")
+    @Test("Steam that ignores steam://exit gets a macOS quit")
     func steamThatIgnoresTheURLIsAskedByMacOS() throws {
         let steam = FakeSteam(here: true, quitsOn: .quit)
         #expect(try stop(steam))
@@ -120,83 +115,16 @@ struct SteamBundleTests {
         #expect(steam.swept == [#"/tmp/Steam\.app/"#])
     }
 
-    @Test("Steam that ignores both quit requests gets SIGTERM")
-    func steamThatIgnoresBothIsTerminated() throws {
-        let steam = FakeSteam(here: true, quitsOn: .terminate)
-        #expect(try stop(steam))
-        #expect(steam.requests == [.exitURL, .quit, .terminate])
-        #expect(steam.swept == [#"/tmp/Steam\.app/"#])
-    }
-
     // It used to be killed with SIGKILL after 30 seconds, mid-write or mid-update. There is
-    // no SIGKILL in Client to reach for.
+    // no kill in Client to reach for.
     @Test("Steam that does not quit is reported with what to do, never swept")
     func steamThatStaysIsReported() {
         let steam = FakeSteam(here: true, quitsOn: .never)
         let failure = #expect(throws: StepFailure.self) { try stop(steam) }
         #expect(failure?.detail.contains("did not quit") == true)
         #expect(failure?.detail.contains("Activity Monitor") == true)
-        #expect(steam.requests == [.exitURL, .quit, .terminate])
-        #expect(steam.swept.isEmpty)
-    }
-
-    // Steam syncs a game's saves when the game quits, so it is not signalled under one.
-    @Test("Steam is not sent SIGTERM while a game is running")
-    func gameKeepsSteamFromBeingTerminated() {
-        let steam = FakeSteam(here: true, quitsOn: .never, game: true)
-        let failure = #expect(throws: StepFailure.self) { try stop(steam) }
-        #expect(failure?.detail.contains("game is running") == true)
         #expect(steam.requests == [.exitURL, .quit])
         #expect(steam.swept.isEmpty)
-    }
-
-    @Test("A running game does not hold up a Steam that quits when asked")
-    func gameDoesNotHoldUpACleanQuit() throws {
-        let steam = FakeSteam(here: true, quitsOn: .quit, game: true)
-        #expect(try stop(steam))
-        #expect(steam.requests == [.exitURL, .quit])
-    }
-
-    private let steamFolders = [URL(filePath: "/Applications/Steam.app"),
-                                URL(filePath: "/Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam")]
-
-    @Test("A native game Steam started counts as a running game")
-    func nativeGameIsSeen() {
-        let ps = """
-              1     0 /sbin/launchd
-            100     1 /Applications/Steam.app/Contents/MacOS/steam_osx
-            200   100 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx
-            300   200 /Users/a/Library/Application Support/Steam/steamapps/common/Game/Game.app/Contents/MacOS/Game
-            """
-        #expect(SteamBundle.hasGameChild(processes: ps, steamFolders: steamFolders))
-    }
-
-    @Test("Steam's own helpers and system tools are not games")
-    func helpersAreNotGames() {
-        let ps = """
-            100     1 /Applications/Steam.app/Contents/MacOS/steam_osx
-            200   100 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx
-            210   200 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/ipcserver
-            220   200 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/Frameworks/Steam Helper.app/Contents/MacOS/Steam Helper
-            230   200 /usr/bin/ditto
-            400     1 /Users/a/Games/Other.app/Contents/MacOS/Other
-            """
-        #expect(!SteamBundle.hasGameChild(processes: ps, steamFolders: steamFolders))
-    }
-
-    @Test("A game started through a launch option's shell is still seen")
-    func gameUnderAShellIsSeen() {
-        let ps = """
-            200     1 /Users/a/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx
-            300   200 /bin/sh
-            310   300 /Users/a/.bridgeplay/np-native
-            """
-        #expect(SteamBundle.hasGameChild(processes: ps, steamFolders: steamFolders))
-    }
-
-    @Test("A process list that cannot be read counts as a running game")
-    func unreadableProcessListIsAGame() {
-        #expect(SteamBundle.hasGameChild(steamFolders: steamFolders, ps: "/nonexistent/ps"))
     }
 
     // steam://exit only reaches this account's Steam; another account's keeps the bundle open.
@@ -216,11 +144,11 @@ struct SteamBundleTests {
         #expect(steam.swept.isEmpty)
     }
 
-    @Test("Steam open in another account is reported even after this one needed SIGTERM")
+    @Test("Steam open in another account is reported even after this one needed a macOS quit")
     func otherAccountAfterEscalation() {
-        let steam = FakeSteam(here: true, elsewhere: true, quitsOn: .terminate)
+        let steam = FakeSteam(here: true, elsewhere: true, quitsOn: .quit)
         #expect(throws: SteamBundle.OpenInAnotherAccount.self) { try stop(steam) }
-        #expect(steam.requests == [.exitURL, .quit, .terminate])
+        #expect(steam.requests == [.exitURL, .quit])
         #expect(steam.swept.isEmpty)
     }
 
