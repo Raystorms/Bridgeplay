@@ -61,7 +61,7 @@ The checks the workflows run (`make -s <target>`):
 - **C and shell suites:** `sigcheck`, `callscheck`, `webpatch-fixtures`, `peicon-fixtures`,
   `panel-behavior`, `spawn-env`, `activatecheck`, `compatcheck`, `compatsvc-check`, `prefixstate-check`,
   `shortcutcheck`, `launch-shell`, `envcheck`, `buildcheck`, `settingscheck`, `routecheck`,
-  `bridgecheck`, `envpasscheck`, `prefixnotecheck`, `gamedrivecheck`, `launchercheck`, `seedcheck`, `gamefixescheck`, `versioncheck`, `cicheck`,
+  `bridgecheck`, `envpasscheck`, `prefixnotecheck`, `powernotecheck`, `gamedrivecheck`, `launchercheck`, `seedcheck`, `gamefixescheck`, `versioncheck`, `cicheck`,
   `compat-reported-check`
 - **Hardware-free device checks:** `game-host-check`, `dualsense-check`, `steam-rumble-check`
 
