@@ -274,8 +274,9 @@ session_wait=$(sed -n '/^if \[ "\${NOTPROTON_LAUNCH_SERVICES:-0}" = "1" \]; then
 {
   printf 'log=%s\nopen() { sleep "$1"; return "$2"; }\n' "$T/session.log"
   printf 'kill_wine_prefix() { echo kill >> "%s"; }\n' "$T/session.ev"
+  printf 'exit_summary() { echo "summary $1 $3" >> "%s"; }\n' "$T/session.ev"
   printf '%s\n' "$session_trap"
-  printf 'set -- "$1" "$2"\nloader_app=x\nNOTPROTON_LAUNCH_SERVICES=1\n'
+  printf 'set -- "$1" "$2"\nloader_app=x\nnp_terminated=0\nNOTPROTON_LAUNCH_SERVICES=1\n'
   printf '%s\n' "$session_wait" | sed 's/open -n -W -a "\$loader_app" "\$@"/open "$@"/'
 } > "$T/session.sh"
 grep -q '^ *open "\$@"' "$T/session.sh" || { echo "FAIL: session launch line not rewritten"; exit 1; }
@@ -284,7 +285,8 @@ start=$(date +%s)
 rc=0; sh "$T/session.sh" 3 7 || rc=$?
 is "the shim's exit status is the session's" 7 "$rc"
 is "the session waits for the shim" yes "$([ $(($(date +%s) - start)) -ge 3 ] && echo yes || echo no)"
-is "the prefix is torn down once" kill "$(cat "$T/session.ev")"
+is "the exit is summed up, then the prefix is torn down once" "summary 7 0
+kill" "$(cat "$T/session.ev")"
 : > "$T/session.ev"
 start=$(date +%s)
 sh "$T/session.sh" 30 0 & sp=$!
@@ -294,6 +296,7 @@ rc=0; wait "$sp" || rc=$?
 is "exit game ends the session" 143 "$rc"
 is "exit game does not wait out the shim" yes "$([ $(($(date +%s) - start)) -lt 5 ] && echo yes || echo no)"
 is "exit game tears the prefix down" yes "$(grep -q kill "$T/session.ev" && echo yes || echo no)"
+is "exit game is summed up as stopped from Steam" "summary 143 1" "$(grep summary "$T/session.ev")"
 
 [ "$fails" -eq 0 ] || { echo "launchercheck: $fails failed"; exit 1; }
 echo "launchercheck: all passed"

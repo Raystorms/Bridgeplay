@@ -1287,6 +1287,81 @@ record_session() {
   esac
 }
 
+# Wine exits with the low byte of the Windows exit code, so 0xc0000005 arrives as 5 and
+# 0xc0000135 as 53. Codes not listed stay raw.
+exit_meaning() {
+  case "$1" in
+    1) echo "a generic failure, from the game or from Wine starting it" ;;
+    3) echo "abort() in the C runtime or a breakpoint, usually after the game's own error message" ;;
+    5) echo "0xc0000005, an access violation: the game crashed" ;;
+    9) echo "0xc0000409, the game stopped itself on a fatal error (fail fast or stack buffer overrun)" ;;
+    23) echo "0xc0000417, an invalid parameter to the C runtime" ;;
+    29) echo "0xc000001d, an illegal instruction, often a CPU feature the Mac does not have" ;;
+    53) echo "0xc0000135, a DLL the game needs was not found" ;;
+    66) echo "0xc0000142, a DLL failed to initialize" ;;
+    99) echo "0xe06d7363, a C++ exception nothing caught" ;;
+    116) echo "0xc0000374, heap corruption" ;;
+    253) echo "0xc00000fd, a stack overflow" ;;
+    255) echo "exit code -1, a failure the game reported itself" ;;
+  esac
+}
+
+# The launcher is a shell, so a Wine process killed by signal N ends with 128+N. Wine
+# handles the signals Windows code raises, so these come from the Mac side.
+exit_signal() {
+  case "$1" in
+    129) echo "SIGHUP" ;;
+    130) echo "SIGINT" ;;
+    132) echo "SIGILL, an illegal instruction in Mac-side code" ;;
+    133) echo "SIGTRAP, a trap in Mac-side code such as Wine, D3DMetal or a macOS framework" ;;
+    134) echo "SIGABRT, an abort in Mac-side code such as Wine, D3DMetal or a macOS framework" ;;
+    136) echo "SIGFPE, an arithmetic error in Mac-side code" ;;
+    137) echo "SIGKILL, killed by macOS or another process; running out of memory is a common cause" ;;
+    138) echo "SIGBUS, a crash in Mac-side code such as Wine, D3DMetal or MoltenVK" ;;
+    139) echo "SIGSEGV, a crash in Mac-side code such as Wine, D3DMetal or MoltenVK" ;;
+    143) echo "SIGTERM, asked to quit from outside Steam" ;;
+  esac
+}
+
+# The lines Wine prints when a process dies or cannot start, ASCII only so the run log
+# stays valid UTF-8 for the app.
+exit_crash_lines() {
+  [ -f "$1" ] || return 0
+  grep -a -E -m 3 'Unhandled (page fault|exception|illegal instruction|stack overflow)|^wine: (Call from|could not|cannot|failed)|err:module:(import_dll|LdrInitializeThunk)|wine client error' \
+    "$1" 2>/dev/null | LC_ALL=C tr -cd '\11\12\40-\176' | cut -c 1-300
+}
+
+# How the game ended, in one line, plus Wine's crash lines. GameSession.swift reads these
+# into play reports. Arguments: exit status, seconds, 1 if Steam stopped it, the Wine log.
+exit_summary() {
+  if [ "$2" -ge 120 ]; then es_took="$(($2 / 60)) min"; else es_took="${2}s"; fi
+  es_signal=$(exit_signal "$1")
+  es_meaning=$(exit_meaning "$1")
+  if [ "$3" = 1 ]; then
+    es_how="stopped from Steam"
+  elif [ "${NOTPROTON_LAUNCH_SERVICES:-0}" = 1 ]; then
+    es_how="started through Launch Services, so the status is open's and not the game's"
+  elif [ -n "$es_signal" ]; then
+    es_how="Wine was killed by $es_signal"
+  elif [ "$1" = 0 ] && [ "$2" -lt 60 ]; then
+    es_how="the game quit by itself within a minute without an error code, usually after its own error message"
+  elif [ "$1" = 0 ]; then
+    es_how="the game quit normally"
+  elif [ -n "$es_meaning" ]; then
+    es_how="the game quit by itself ($es_meaning)"
+  else
+    es_how="the game quit by itself"
+  fi
+  printf '=== exit summary: exit status %s after %s, %s ===\n' "$1" "$es_took" "$es_how"
+  exit_crash_lines "$4" | while IFS= read -r es_line; do
+    printf '=== exit cause: %s ===\n' "$es_line"
+  done
+  # winedbg's "has encountered a serious problem" dialog holds the game open until closed.
+  if grep -a -q -E 'starting debugger|exe=winedbg' "$4" 2>/dev/null; then
+    echo "=== exit note: Wine started its crash handler, whose error dialog can sit behind the game ==="
+  fi
+}
+
 # Asked once per switch, at the next launch after the crash.
 offer_switch_rebuild() {
   switch="$STEAM_COMPAT_DATA_PATH/notproton-switch"
@@ -2781,6 +2856,8 @@ open_pid=$!
 status=0
 wait "$open_pid" || status=$?
 echo "=== game exited status=$status, killing wine prefix ===" >> "$log" 2>&1 || true
+exit_summary "$status" "$(($(date +%s) - np_started))" "$np_terminated" "$loader_root/bridgeplay-wine.log" \
+  >> "$log" 2>&1 || true
 kill_wine_prefix
 [ -z "$STEAM_COMPAT_DATA_PATH" ] \
   || record_session "$loader_root/bridgeplay-wine.log" "$(($(date +%s) - np_started))" "$np_terminated"
