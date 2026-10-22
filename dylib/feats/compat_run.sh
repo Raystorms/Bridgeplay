@@ -1046,6 +1046,35 @@ first_launch_notice() {
   notify_user "Getting this game ready" "The first launch sets the game up and prepares its graphics. It can take a few minutes, and the screen may stay black until it is ready."
 }
 
+# Prints 1 when Low Power Mode is on, 0 when off, nothing when pmset does not say. pmset's
+# "Currently in use" values are what ProcessInfo.isLowPowerModeEnabled reports, the lowPower
+# field of compatibility reports (GameReport.swift). Macs with High Power Mode call it
+# powermode (0 automatic, 1 low, 2 high).
+low_power_mode() {
+  pmset -g 2>/dev/null | awk '$1 == "lowpowermode" || $1 == "powermode" { seen = 1; if ($2 == "1") low = 1 }
+    END { if (seen) print low ? 1 : 0 }'
+}
+
+# Low Power Mode lowers the GPU's clocks, and players do not tie that to a slow game. Says so
+# once per Low Power Mode session for each macOS user: the mark goes when a launch finds it
+# off. Runs beside the launch, and when pmset gives no answer nothing is shown or cleared.
+low_power_notice() {
+  [ "$verb" = waitforexitandrun ] || return 0
+  (
+    exec 8>&- 9>&-
+    mark="$np_support/low-power-noticed"
+    case "$(low_power_mode)" in
+      0) rm -f "$mark" ;;
+      1)
+        echo "power: Low Power Mode is on" >> "$log" 2>&1 || true
+        # noclobber creates the mark only if it is not there, so two games starting together notify once
+        (set -C; : > "$mark") 2>/dev/null || exit 0
+        notify_user "Low Power Mode is on" "Games run slower while it is on. Turn it off in System Settings > Battery, or Energy on a desktop Mac."
+        ;;
+    esac
+  ) >/dev/null 2>&1 &
+}
+
 # Posted by the Bridgeplay app, so it carries Bridgeplay's name and icon; osascript (shown
 # as Script Editor) only when the app cannot be found. Never holds up the launch.
 notify_user() {
@@ -2218,6 +2247,7 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   stage_step="prefix check"
   refuse_broken_prefix
 fi
+low_power_notice
 
 stage_step="graphics backend"
 select_backend "$1"
