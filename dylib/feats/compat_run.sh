@@ -1947,7 +1947,7 @@ abandon_seed() {
       in_template_env "$seed_scratch" "$WINESERVER" -w >/dev/null 2>&1 || exit "$1"
     fi
     # Half moved into the prefix: finish now, or keep the rest for the next launch to finish.
-    if [ "$seed_merging" -eq 0 ] || merge_seed_tree move; then
+    if [ "$seed_merging" -eq 0 ] || { unnest_seed_entry && merge_seed_tree move; }; then
       rm -rf "$seed_scratch" 2>/dev/null || true
     fi
   fi
@@ -2032,15 +2032,35 @@ build_prefix_template() {
   [ -f "$template_dir/pfx/system.reg" ]
 }
 
+# Puts back a staged folder that mv put inside a folder that appeared at its name since the
+# check. Each folder move is noted first, so this also works after a launch killed mid-move.
+unnest_seed_entry() {
+  placing="$seed_scratch/.notproton-seed-placing"
+  [ -s "$placing" ] || return 0
+  # Cut short while it was noted, so the move never started.
+  { read -r staged && read -r source && read -r target; } < "$placing" || { : > "$placing"; return 0; }
+  case "$source:$target" in "$seed_scratch"/*:"$WINEPREFIX"/*) ;; *) return 1 ;; esac
+  nested="$target/${source##*/}"
+  if [ "$(stat -f %i "$target" 2>/dev/null)" != "$staged" ] \
+    && [ "$(stat -f %i "$nested" 2>/dev/null)" = "$staged" ]; then
+    mv -n "$nested" "$source" && [ ! -e "$nested" ] || return 1
+  fi
+  : > "$placing"
+}
+
 # Puts one staged entry at a free name in the prefix, never over something that appeared
 # there since the check: link(2) and symlink(2) refuse an existing name, and a folder that
 # appeared takes ours inside it, which goes back to staging.
 place_seed_entry() {
   if [ -d "$1" ] && [ ! -L "$1" ]; then
     staged=$(stat -f %i "$1") || return 1
+    printf '%s\n%s\n%s\n' "$staged" "$1" "$2" > "$seed_scratch/.notproton-seed-placing" || return 1
     mv -n "$1" "$2" || return 1
-    [ "$(stat -f %i "$2" 2>/dev/null)" != "$staged" ] || return 0
-    [ "$(stat -f %i "$2/${1##*/}" 2>/dev/null)" != "$staged" ] || mv -n "$2/${1##*/}" "$1"
+    if [ "$(stat -f %i "$2" 2>/dev/null)" = "$staged" ]; then
+      : > "$seed_scratch/.notproton-seed-placing"
+      return 0
+    fi
+    unnest_seed_entry
     return 1
   elif [ -L "$1" ]; then
     ln -s "$(readlink "$1")" "$2" && [ -L "$2" ] \
@@ -2069,7 +2089,9 @@ merge_seed_tree() (
       [ -e "$source" ] || [ -L "$source" ] || continue
       name=${source##*/}
       if [ -z "$relative" ]; then
-        case "$name" in system.reg|.update-timestamp|.notproton-seed-target) continue ;; esac
+        case "$name" in
+          system.reg|.update-timestamp|.notproton-seed-target|.notproton-seed-placing) continue ;;
+        esac
       fi
       target="$target_dir/$name"
       if [ ! -e "$target" ] && [ ! -L "$target" ]; then
@@ -2149,7 +2171,7 @@ finish_dead_seeds() {
     [ "$(cat "$leftover/.notproton-seed-target" 2>/dev/null)" \
       = "$(stat -f '%d:%i' "$WINEPREFIX" 2>/dev/null)" ] || continue
     seed_scratch=$leftover
-    if merge_seed_tree check && merge_seed_tree move; then
+    if unnest_seed_entry && merge_seed_tree check && merge_seed_tree move; then
       echo "=== finished seeding this prefix, which an earlier launch left half done ===" \
         >> "$log" 2>&1 || true
     else

@@ -192,6 +192,34 @@ check test ! -e "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/default.ini"
 check test ! -e "$WINEPREFIX/system.reg"
 check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
 
+# Killed right after mv put the folder inside the one that appeared, before it could check:
+# the next launch puts it back and merges it with the player's.
+fixture
+mkdir -p "$template_dir/pfx/drive_c/users/steamuser/Documents/Game" \
+  "$WINEPREFIX/drive_c/users/steamuser/Documents"
+printf template > "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/default.ini"
+env functions="$functions" /bin/sh -c "
+  eval \"\$functions\"
+  mv() {
+    for destination; do :; done
+    case \"\$destination\" in */pfx/drive_c/users/steamuser/Documents/Game)
+      mkdir \"\$destination\" && printf player > \"\$destination/slot.sav\"
+      command mv \"\$@\"
+      kill -KILL \"\$\$\"
+      exec /usr/bin/true ;;
+    esac
+    command mv \"\$@\"
+  }
+  copy_template_into_prefix
+" 2>/dev/null || true
+check test -e "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/Game"
+finish_dead_seeds
+check test ! -e "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/Game"
+check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav")" = player
+check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/default.ini")" = template
+check test -f "$WINEPREFIX/system.reg"
+check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
+
 # A prefix rebuilt since the seed was killed is seeded again, not finished with the leftovers.
 fixture
 mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
