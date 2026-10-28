@@ -633,6 +633,9 @@ sigdb-install:
 
 LAUNCHABLE_BUNDLES := $(HOME)/Desktop/Bridgeplay.app /Applications/Bridgeplay.app
 
+# The Chinese, Japanese and Korean fonts (about 85 MB) stay out of the app: CJKFonts.swift
+# downloads them from their own release, packed by scripts/package-fonts.sh.
+CJK_FONTS := malgun.ttf msgothic.ttc msyh.ttf msyhbd.ttf simsun.ttc
 FONT_FILES := --include='*/' --include='*.ttf' --include='*.ttc' --exclude='*'
 
 fonts-install:
@@ -702,7 +705,7 @@ app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO)
 	done
 	@if [ ! -d build/fonts ]; then echo "build/fonts is missing, run: $(MAKE) fonts" >&2; exit 1; fi
 	@mkdir -p "$(APP_PAYLOAD)/fonts"
-	@rsync -a --delete build/fonts/ "$(APP_PAYLOAD)/fonts/"
+	@rsync -a --delete --delete-excluded $(foreach f,$(CJK_FONTS),--exclude='/$(f)') build/fonts/ "$(APP_PAYLOAD)/fonts/"
 	@stamp="$$(git log -1 --format=%ct 2>/dev/null)"; \
 	if [ -z "$$stamp" ]; then echo "build-time needs a git checkout" >&2; exit 1; fi; \
 	echo "$$stamp" > "$(APP_PAYLOAD)/build-time"

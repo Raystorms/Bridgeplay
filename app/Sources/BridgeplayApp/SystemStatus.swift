@@ -873,6 +873,7 @@ final class SystemStatus {
         }.value
         snapshot = captured
         AppLog.note(captured)
+        if !captured.installContent.blocksInstallation { CJKFonts.fetchIfNeeded() }
         await refreshSigningIdentity()
         await refreshRunnerStorage(cleanTemplates: !captured.installContent.blocksInstallation)
     }

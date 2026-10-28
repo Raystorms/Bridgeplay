@@ -1372,6 +1372,22 @@
         }
       }
     },
+    "Adding fonts for Chinese, Japanese and Korean" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aggiunta dei font per cinese, giapponese e coreano"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在添加中文、日文和韩文字体"
+          }
+        }
+      }
+    },
     "Adding the certificate…" : {
       "localizations" : {
         "it" : {
@@ -10561,6 +10577,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "游戏第一次使用控制器时，macOS 会询问是否允许 Steam 使用“输入监控”。请点击“允许”。如果错过了，请在“输入监控”中开启 Steam。"
+          }
+        }
+      }
+    },
+    "The font download could not be unpacked." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Non è stato possibile estrarre i font scaricati."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法解压下载的字体。"
+          }
+        }
+      }
+    },
+    "The font download is damaged." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I font scaricati sono danneggiati."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载的字体已损坏。"
           }
         }
       }

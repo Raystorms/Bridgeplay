@@ -116,6 +116,14 @@ if [ -z "$notes" ]; then
 	[ -n "$notes" ] || notes="Bridgeplay $version"
 fi
 
+# The app downloads its CJK fonts from the release CJKFonts.swift pins (scripts/package-fonts.sh
+# --publish); a release without it would leave new installs without them.
+fonts_archive=$(sed -n 's/.*static let archive = "\(fonts-cjk-[0-9a-f]*\.tar\.xz\)".*/\1/p' app/Sources/BridgeplayApp/Model/CJKFonts.swift)
+[ -n "$fonts_archive" ] || die "no fonts archive pinned in CJKFonts.swift"
+fonts_tag=${fonts_archive%.tar.xz}
+gh release view "$fonts_tag" -R "$slug" --json assets -q '.assets[].name' 2>/dev/null | grep -qx "$fonts_archive" \
+	|| check "$fonts_tag has no $fonts_archive on GitHub; run scripts/package-fonts.sh --publish"
+
 sparkle=app/.build/artifacts/sparkle/Sparkle/bin
 [ -x "$sparkle/generate_appcast" ] || swift build --package-path app >/dev/null
 [ -x "$sparkle/generate_appcast" ] || die "no Sparkle tools at $sparkle"

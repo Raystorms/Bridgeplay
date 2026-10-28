@@ -230,6 +230,19 @@ import it. Without the backup, a new certificate means one more App Management g
 every user. Do not change the certificate's Trust settings. The first `make app` with the
 identity asks for access to its key; choose Always Allow.
 
+## CJK fonts
+
+The Chinese, Japanese and Korean fonts (Makefile `CJK_FONTS`, about 85 MB) are not in the app.
+`CJKFonts.swift` downloads them once the fonts folder exists, from a `fonts-cjk-<id>`
+prerelease, and checks the archive and every font against its pins. Existing installs already
+have them from earlier apps, so they download nothing. When `fonts/` changes:
+
+1. `make fonts`, then `scripts/package-fonts.sh`. The archive is reproducible, and `<id>` comes
+   from the fonts, so unchanged fonts give the same name and pins.
+2. Copy the pins it prints into `CJKFonts.swift`.
+3. `scripts/package-fonts.sh --publish` creates the release. `release-local.sh` stops while the
+   pinned archive is missing on GitHub.
+
 ## Compatibility reports
 
 The app's one-tap reports go to `https://bridgeplay.dev/api/report` (bridgeplay-web,
