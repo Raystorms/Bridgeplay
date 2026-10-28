@@ -59,7 +59,7 @@ The checks the workflows run (`make -s <target>`):
 - **C and shell suites:** `sigcheck`, `callscheck`, `webpatch-fixtures`, `peicon-fixtures`,
   `panel-behavior`, `spawn-env`, `activatecheck`, `compatcheck`, `compatsvc-check`, `prefixstate-check`,
   `shortcutcheck`, `launch-shell`, `envcheck`, `buildcheck`, `settingscheck`, `routecheck`,
-  `bridgecheck`, `envpasscheck`, `prefixnotecheck`, `powernotecheck`, `exitcheck`, `gamedrivecheck`, `launchercheck`, `seedcheck`, `gamefixescheck`, `versioncheck`, `cicheck`,
+  `bridgecheck`, `envpasscheck`, `prefixnotecheck`, `powernotecheck`, `exitcheck`, `launchprogresscheck`, `gamedrivecheck`, `launchercheck`, `seedcheck`, `gamefixescheck`, `versioncheck`, `cicheck`,
   `compat-reported-check`
 
 `make tests-list` prints the test paths. A check whose tool or input is missing prints

@@ -1007,27 +1007,36 @@ running_name() {
 # Steam passes "run" for helpers such as install scripts, which get no dialog.
 show_alert() {
   [ "$verb" != run ] || return 0
+  launch_step dialog
   exec 8>&- 9>&-
   osascript >/dev/null 2>&1 <<APPLESCRIPT || true
 display alert "$1" message "$2" as critical
 APPLESCRIPT
 }
 
-# A game's first launch builds its prefix and then compiles its shaders into the Metal cache,
-# which can leave a black screen for minutes. Says so once, without holding up the launch.
-# First means no prefix yet, or neither our marker nor a Metal cache for the game's launcher
-# bundle (games from before the marker existed have the cache, so they stay quiet).
-first_launch_notice() {
+# Bridgeplay's panel says the launch is still going until the game shows a window or this
+# script ends, and what it is doing as launch_step writes it. It runs beside the launch and
+# only reads a file, so it never holds the launch up. Later launches show it only when slow
+# (LaunchProgress.swift). Without the app, a new prefix still gets the old notice.
+launch_progress() {
   [ "$verb" = waitforexitandrun ] && [ "$app_id" != 0 ] || return 0
-  marker="$STEAM_COMPAT_DATA_PATH/bridgeplay-first-launch"
-  [ -e "$marker" ] && return 0
-  : > "$marker" 2>/dev/null || true
-  if [ -f "$STEAM_COMPAT_DATA_PATH/pfx/system.reg" ]; then
-    metal_cache="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null)com.notproton.launcher.$app_id/com.apple.metal"
-    [ -d "$metal_cache" ] && return 0
+  launch_step_file="$STEAM_COMPAT_DATA_PATH/bridgeplay-launch-step"
+  launch_step "$1"
+  progress_app=$(cat "$np_support/app-executable" 2>/dev/null) || progress_app=""
+  if [ -x "$progress_app" ]; then
+    # A child of this script, so the panel can tell when the script is gone.
+    env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+      "$progress_app" --launch-progress "$STEAM_COMPAT_DATA_PATH" "$prefix_was_new" \
+      "$np_support/launchers/$app_id/bridgeplay-wine.log" \
+      < /dev/null > /dev/null 2>&1 7>&- 8>&- 9>&- &
+    echo "launch: progress panel started (new prefix: $prefix_was_new)" >> "$log" 2>&1 || true
+  elif [ "$prefix_was_new" = 1 ]; then
+    notify_user "Getting this game ready" "The first launch sets the game up and prepares its graphics. It can take a few minutes, and the screen may stay black until it is ready."
   fi
-  echo "=== first launch, notice shown ===" >> "$log" 2>&1 || true
-  notify_user "Getting this game ready" "The first launch sets the game up and prepares its graphics. It can take a few minutes, and the screen may stay black until it is ready."
+}
+
+launch_step() {
+  [ -z "${launch_step_file:-}" ] || printf '%s\n' "$1" > "$launch_step_file" 2>/dev/null || true
 }
 
 # Prints 1 when Low Power Mode is on, 0 when off, nothing when pmset does not say. pmset's
@@ -1083,6 +1092,7 @@ alert_safe() {
 # The log path reaches AppleScript as an argument, so a quote in it cannot end a string.
 show_rebuild_failure() {
   [ "$verb" != run ] || return 0
+  launch_step dialog
   exec 8>&- 9>&-
   answer=$(osascript - "$log" <<'APPLESCRIPT'
 on run argv
@@ -1203,6 +1213,7 @@ rebuild_prefix() {
     show_rebuild_failure
     exit 1
   }
+  launch_step dialog
   exec 8>&- 9>&-
   # AppleScript run from a shell has no icon of its own, so caution comes badged with a folder.
   icon=$(cat "$np_support/app-executable" 2>/dev/null) || icon=""
@@ -2370,7 +2381,7 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
     echo "avx: ROSETTA_ADVERTISE_AVX=$ROSETTA_ADVERTISE_AVX from $avx_from" >> "$log" 2>&1 || true
   fi
   without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
-  first_launch_notice
+  if [ "$prefix_was_new" = 1 ]; then launch_progress setup; else launch_progress prepare; fi
   stage_step="prefix seed"
   seed_prefix_from_template
   stage_step="profile layout"
@@ -2392,6 +2403,7 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   refuse_broken_prefix
 fi
 low_power_notice
+launch_step prepare
 
 stage_step="graphics backend"
 select_backend "$1"
@@ -2909,6 +2921,7 @@ lsregister="$lsregister/Frameworks/LaunchServices.framework/Support/lsregister"
 [ -x "$lsregister" ] && "$lsregister" -f "$loader_app" >> "$log" 2>&1 || true
 np_started=$(date +%s)
 np_terminated=0
+launch_step start
 if [ "${NOTPROTON_LAUNCH_SERVICES:-0}" = "1" ]; then
   open -n -W -a "$loader_app" "$@" >> "$log" 2>&1 &
 else
@@ -2945,6 +2958,7 @@ open_pid=$!
 /usr/bin/caffeinate -d -i -w "$open_pid" >> "$log" 2>&1 &
 status=0
 wait "$open_pid" || status=$?
+launch_step ended
 np_ran=$(($(date +%s) - np_started))
 echo "=== game exited status=$status, killing wine prefix ===" >> "$log" 2>&1 || true
 kill_wine_prefix

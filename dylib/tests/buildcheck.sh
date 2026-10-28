@@ -98,6 +98,8 @@ CrossOver 26.3
 echo "== alerts =="
 alert=$(extract show_alert)
 [ -n "$alert" ] || { echo "FAIL: show_alert not found in $SRC"; exit 1; }
+alert="$(extract launch_step)
+$alert"
 data=$(mktemp -d "$work/compatdata.XXXXXX")
 (
 	verb=waitforexitandrun
@@ -146,7 +148,8 @@ is "a tool name's own arch suffix is not repeated" 'rebuild: This game needs its
 
 Do you want to rebuild the prefix for CrossOver Preview 2026 10 15‑ARM64, running through FEX? Your save games will be preserved and not lost.' "$(arch_case aarch64-unix 'CrossOver 2026 10 15-ARM64 - Rosetta')"
 is "a matching architecture needs no rebuild" "" "$(arch_case x86_64-unix)"
-rebuild="$(extract run_rebuild)
+rebuild="$(extract launch_step)
+$(extract run_rebuild)
 $(extract rebuild_prefix)"
 mkdir -p "$work/app with spaces"
 cat > "$work/app with spaces/NotProtonApp" <<'SH'
