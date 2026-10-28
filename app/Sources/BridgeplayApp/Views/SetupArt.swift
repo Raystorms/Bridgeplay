@@ -534,7 +534,7 @@ private struct LightUpArt: View {
     }
 }
 
-// Done: the finished mark on its tile, the gradient edge turning (hl-spin) and a soft glow.
+// Done: the app icon's glass mark over a soft violet glow. The bridge itself stays white.
 private struct DoneArt: View {
     let t: Double
 
@@ -544,25 +544,7 @@ private struct DoneArt: View {
                 .fill(RadialGradient(colors: [BP.violet.opacity(0.45), BP.blue.opacity(0.15), .clear], center: .center, startRadius: 0, endRadius: 120))
                 .frame(width: 260, height: 260)
                 .scaleEffect(1 + sin(t * 1.2) * 0.04)
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(.black)
-                .frame(width: 124, height: 124)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .strokeBorder(AngularGradient(colors: [BP.violet, BP.blue, BP.pink, BP.violet], center: .center, angle: .degrees(t * 60)), lineWidth: 2)
-                }
-                .overlay {
-                    ZStack {
-                        BridgeShape(part: .deck)
-                            .stroke(BP.fg, style: StrokeStyle(lineWidth: BridgeShape.width(.deck, size: 96), lineCap: .round))
-                        BridgeShape(part: .cable)
-                            .stroke(BP.iridescent, style: StrokeStyle(lineWidth: BridgeShape.width(.cable, size: 96), lineCap: .round, lineJoin: .round))
-                        BridgeShape(part: .echo)
-                            .stroke(BP.fg.opacity(0.35), style: StrokeStyle(lineWidth: BridgeShape.width(.echo, size: 96), lineCap: .round))
-                    }
-                    .frame(width: 96, height: 96)
-                }
-                .shadow(color: BP.violet.opacity(0.5), radius: 30)
+            GlassMark(size: 124)
                 .offset(y: sin(t * 1.1) * 4)
         }
     }
