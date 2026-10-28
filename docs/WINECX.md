@@ -416,6 +416,12 @@ Every binary in `app/Sources/BridgeplayApp/Resources/` built from a patch or sou
 repository, with the sha256 of the committed file, which must equal the Swift pin in the last
 column. Build recipes are in the sections above and in each patch folder's README.
 
+The Mach-O files (`.so`, `.dylib`) are committed signed ad hoc. A release re-signs them with
+the Developer ID so Apple notarizes the app (see [RELEASING.md](RELEASING.md), Signing), which
+changes their bytes but not their code. `SignedPin.swift` maps each sha256 below to the hash
+of the file without its signature, so both copies, and engines laid out by either, pass. A
+rebuilt Mach-O file needs its line there updated too; `SignedPinTests` fails until it is.
+
 | File | Built from | sha256 | Pinned in |
 |---|---|---|---|
 | `crypt32-winecx-11.17.dll` | `ngx-signer-patch/` | `27b485cc2a6bf651d8d72173e5d40dbc914666d3f8e8f6a4031a91c5ff22ebbf` | `FreeEngineWinecx.v1117.nvidia` |

@@ -423,7 +423,7 @@ enum FreeEngineWinecx {
     // layout that is neither stock nor a complete D3DMetal link.
     static func layoutProblems(root: URL, release: WinecxRelease = current) -> [String] {
         var problems = expectedFiles(release).filter { path, hash in
-            Digest.sha256IfPresent(root.appending(path: path)) != hash
+            !SignedPin.matches(root.appending(path: path), sha256: hash)
         }.keys.sorted()
         if !FileManager.default.fileExists(atPath: msyncMarker(in: root).path(percentEncoded: false)) {
             problems.append(msyncMarkerPath)
@@ -585,7 +585,7 @@ enum FreeEngineWinecx {
             AppLog.note("bundled file: \(name) at \(path) can't be read: \(error.localizedDescription)")
             throw StepFailure(step: step, detail: "Bridgeplay can't read its \(name). Reinstall Bridgeplay.")
         }
-        guard actual == file.sha256 else {
+        guard actual == file.sha256 || SignedPin.matches(source, sha256: file.sha256) else {
             AppLog.note("bundled file: \(name) at \(path) has sha256 \(actual), expected \(file.sha256)")
             throw StepFailure(step: step, detail: "Bridgeplay's \(name) doesn't match its pinned checksum. Reinstall Bridgeplay.")
         }

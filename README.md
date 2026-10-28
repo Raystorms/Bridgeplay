@@ -67,7 +67,7 @@ To add yours: after you play, Bridgeplay asks once per game *How did it run?* On
 ## Install
 
 1. **Download the installer** from [bridgeplay.dev](https://bridgeplay.dev): `Bridgeplay-Setup.zip`, under 1 MB. It fetches Bridgeplay, Apple's graphics, the engine and Steam (from Valve, if missing) as it installs, and checks every download against Bridgeplay's signature.
-2. **Open Bridgeplay Installer.** macOS blocks it the first time: `READ ME FIRST.html` in the download shows the three clicks, Done, then **Open Anyway** in **System Settings > Privacy & Security**, then confirm with your password or Touch ID. It needs an admin account.
+2. **Open Bridgeplay Installer.** It's notarized by Apple, so macOS only asks once whether to open an app downloaded from the internet: click **Open**. It needs an admin account.
 3. **Follow the Setup Assistant**: Rosetta, graphics, Steam sign-in, App Management and a couple of other standard macOS prompts. Setup modifies your Steam app; see [What Bridgeplay changes in Steam](#what-bridgeplay-changes-in-steam).
 4. **Press Play** on any Windows game in Steam. The first time you use a controller, allow Steam's Input Monitoring request.
 

@@ -719,9 +719,12 @@ APP_BUILD    := $(shell sed -n 's/^\#define BRIDGEPLAY_BUILD \([0-9][0-9]*\)$$/\
 APP_UPSTREAM := $(shell sed -n 's/^\#define NOTPROTON_VERSION "\(.*\)"/\1/p' dylib/version.h)
 
 # The app's code signing identity. Ad hoc (-) by default, so any checkout builds; a release
-# uses a stable self-signed identity (BRIDGEPLAY_SIGN_IDENTITY, see docs/RELEASING.md) so the
+# uses the maintainer's Developer ID (BRIDGEPLAY_SIGN_IDENTITY, see docs/RELEASING.md) so the
 # designated requirement, and the macOS permissions keyed to it, survive updates.
 APP_SIGN_ID ?= $(or $(BRIDGEPLAY_SIGN_IDENTITY),-)
+# Notarization needs the hardened runtime and a secure timestamp. Only a Developer ID gets
+# them: library validation needs a Team ID, which ad hoc and self-signed identities lack.
+APP_SIGN_FLAGS := $(if $(findstring Developer ID Application:,$(APP_SIGN_ID)),--options runtime --timestamp)
 
 # Every Mach-O file in the bundled payload, path:identifier. `make app` signs them with
 # APP_SIGN_ID under these identifiers before the app's own signature, so a release gives
@@ -822,7 +825,7 @@ app: stamp-check app-payload $(ICON_CAR)
 	@echo "==> Payload complete in the bundle"
 	@payload="$(APP_BUNDLE_PAYLOAD)"; \
 	for spec in $(PAYLOAD_SIGN_IDS); do \
-		codesign -f -s "$(APP_SIGN_ID)" -i "$${spec##*:}" "$$payload/$${spec%%:*}" || exit 1; \
+		codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) -i "$${spec##*:}" "$$payload/$${spec%%:*}" || exit 1; \
 	done; \
 	unlisted=$$(find "$$payload" -type f | while read -r f; do \
 		case "$$(file -b "$$f")" in (Mach-O*) ;; (*) continue ;; esac; \
@@ -833,15 +836,22 @@ app: stamp-check app-payload $(ICON_CAR)
 		echo "$$unlisted" | sed 's/^/        /' >&2; \
 		exit 1; \
 	fi
-	@# Inside out, so Sparkle's helpers carry the same identity as the app. No hardened
-	@# runtime: library validation needs a Team ID, which a self-signed identity has none of.
+	@# The Wine binaries and libSDL2 Bridgeplay lays into its engines are committed ad hoc
+	@# and pinned. Apple notarizes only Developer ID code, so a release re-signs them under
+	@# their own identifiers; SignedPin.swift matches them either way.
+	@[ -z "$(APP_SIGN_FLAGS)" ] || find "$(APP_BUNDLE)/Contents/Resources" -path "$(APP_BUNDLE_PAYLOAD)" -prune \
+		-o -type f -print | while read -r f; do \
+		case "$$(file -b "$$f")" in (Mach-O*) ;; (*) continue ;; esac; \
+		codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) --preserve-metadata=identifier "$$f" || exit 1; \
+	done
+	@# Inside out, so Sparkle's helpers carry the same identity as the app.
 	@sparkle="$(APP_BUNDLE)/Contents/Frameworks/Sparkle.framework/Versions/B"; \
-	codesign -f -s "$(APP_SIGN_ID)" -i org.sparkle-project.Sparkle.Autoupdate "$$sparkle/Autoupdate" || exit 1; \
+	codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) -i org.sparkle-project.Sparkle.Autoupdate "$$sparkle/Autoupdate" || exit 1; \
 	for code in "$$sparkle"/XPCServices/*.xpc "$$sparkle/Updater.app" \
 		"$(APP_BUNDLE)/Contents/Frameworks/Sparkle.framework"; do \
-		codesign -f -s "$(APP_SIGN_ID)" --preserve-metadata=entitlements "$$code" || exit 1; \
+		codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) --preserve-metadata=entitlements "$$code" || exit 1; \
 	done
-	codesign -f -s "$(APP_SIGN_ID)" "$(APP_BUNDLE)"
+	codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) "$(APP_BUNDLE)"
 	codesign --verify --strict --deep "$(APP_BUNDLE)"
 	@codesign -d -r- "$(APP_BUNDLE)" 2>&1 | sed -n 's/^#* *designated => /==> Designated requirement: /p'
 	@plist="$(APP_BUNDLE)/Contents/Info.plist"; \

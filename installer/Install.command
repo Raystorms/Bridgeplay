@@ -50,9 +50,9 @@ steam_tmp=""
 steam_mnt=""
 # The installer carries no app, so it never goes stale: it installs the Latest release.
 app_url="https://github.com/raymondchins/Bridgeplay/releases/latest/download/Bridgeplay.zip"
-# Release builds are signed with the self-signed "Bridgeplay Release" identity; pin its leaf
-# so an ad-hoc or other-signed zip on the release fails.
-app_requirement='=identifier "com.bridgeplay.Bridgeplay" and certificate leaf = H"63cd686b8e4c1123ef885e90e1127fefd5bd42b1"'
+# Release builds are signed with the maintainer's Developer ID (Team AF38EA29BA); releases
+# before it carry the self-signed "Bridgeplay Release" leaf. An ad-hoc or other-signed zip fails.
+app_requirement='=identifier "com.bridgeplay.Bridgeplay" and (anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = "AF38EA29BA" or certificate leaf = H"63cd686b8e4c1123ef885e90e1127fefd5bd42b1")'
 app_tmp=""
 # shellcheck disable=SC2329 # runs from the EXIT trap
 cleanup() {

@@ -97,8 +97,9 @@ the dylib into `Steam.app` and installs the signatures, fonts and helpers into
 - **Wine patches:** a patch change is not finished until the binary it produces is
   rebuilt with the recipe in [docs/WINECX.md](docs/WINECX.md) or the patch folder's
   README. Then update its sha256 pins (in `docs/WINECX.md` and
-  `app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift`) and its entry in
-  [NOTICE](NOTICE). Don't commit a binary without its patch.
+  `app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift`, plus
+  `app/Sources/BridgeplayApp/Support/SignedPin.swift` for a `.so` or `.dylib`) and its
+  entry in [NOTICE](NOTICE). Don't commit a binary without its patch.
 - **Legacy names stay:** existing installs depend on `notproton.dylib`, the `NOTPROTON_*`
   variables, `com.notproton.*` identifiers and the fallback to the old `notproton` support
   folders. Don't rename them. User-facing names are Bridgeplay's (`BRIDGEPLAY_*`).

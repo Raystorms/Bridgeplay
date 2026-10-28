@@ -1,8 +1,8 @@
 # Releasing Bridgeplay
 
 Every release is a GitHub release of `raymondchins/Bridgeplay` carrying `Bridgeplay.zip`,
-`appcast.xml` and the small native installer, `Bridgeplay-Setup.zip` (a ZIP, not a DMG, so
-Gatekeeper asks for Open Anyway once instead of twice). The native installer also downloads the `installer`
+`appcast.xml` and the small native installer, `Bridgeplay-Setup.zip` (notarized, so macOS
+only asks once whether to open it). The native installer also downloads the `installer`
 release's `Bridgeplay-Installer.zip` for GPTK, the engine and the configs, checked against
 the `Bridgeplay-Installer.zip.sig` that `release-local.sh` signs and uploads beside it. The one-click `Bridgeplay-Installer.zip` lives on its own prerelease, tag
 `installer` (bridgeplay.dev/download redirects to
@@ -108,10 +108,10 @@ its version check stops it. `make versioncheck` covers the stamp, the bump and t
    the keychain.
 4. Release: `scripts/release-local.sh` (notes default to the commit subjects since the
    previous `vX.Y.Z` release; pass a string to override). It builds with
-   `scripts/build-local.sh --checks`, signs the app with the `Bridgeplay Release` identity
-   (see Signing), signs the zip with the EdDSA key in the login keychain, writes an appcast with `minimumSystemVersion` 26.0, packages the installer from the
+   `scripts/build-local.sh --checks`, signs the app with the maintainer's Developer ID and
+   notarizes it (see Signing), signs the zip with the EdDSA key in the login keychain, writes an appcast with `minimumSystemVersion` 26.0, packages the installer from the
    same app (`scripts/package-installer.sh`). It also builds the native installer ZIP with the same
-   release identity and attaches it beside the product ZIP and appcast on `vX.Y.Z` Latest.
+   Developer ID, notarized, and attaches it beside the product ZIP and appcast on `vX.Y.Z` Latest.
    The existing bundled installer ZIP remains on the separate `installer` tag.
 
 Any other release in the repository (a DXMT build, say) must be created with
@@ -139,24 +139,38 @@ Two signatures, for different things:
   designated requirement is what macOS keys permissions to (App Management, which lets
   Bridgeplay patch Steam.app). An ad hoc signature's requirement is the cdhash, which is new
   with every build, so macOS treats each update as a different app: the toggle in System
-  Settings still looks on, but no longer applies. Releases are therefore signed with a
-  stable self-signed identity, and the requirement becomes
-  `identifier "com.bridgeplay.Bridgeplay" and certificate leaf = H"<sha1>"`, the same for
-  every build signed with that certificate.
+  Settings still looks on, but no longer applies. Releases are therefore signed with the
+  maintainer's Developer ID (Team `AF38EA29BA`), and the requirement becomes
+  `identifier "com.bridgeplay.Bridgeplay" and anchor apple generic and … certificate
+  leaf[subject.OU] = AF38EA29BA`, the same for every build and every renewed certificate of
+  that team.
+- **Notarization** lets Gatekeeper open a downloaded copy without Open Anyway. Apple scans
+  the signed app; `scripts/notarize.sh` submits it with `notarytool`, staples the ticket and
+  checks that `spctl` reports `Notarized Developer ID`. It needs the hardened runtime and a
+  secure timestamp on every Mach-O file, which only a Developer ID gets.
 
 `make app` signs with `APP_SIGN_ID`, which defaults to `$BRIDGEPLAY_SIGN_IDENTITY` and
 then to ad hoc (`-`), so any checkout still builds. Everything inside is signed with the
 same identity first, inside out: Sparkle's helpers (`Autoupdate`, `Updater.app`, its XPC
 services) and every Mach-O file in the payload, each under the explicit identifier
 `PAYLOAD_SIGN_IDS` in the Makefile gives it. `make app` stops if the payload holds a Mach-O
-file that list does not name, so a new helper needs an entry there. There is no hardened
-runtime: library validation needs a Team ID, which a self-signed certificate does not have. `scripts/release-local.sh` uses `BRIDGEPLAY_SIGN_IDENTITY` (default
-`Bridgeplay Release`), refuses ad hoc, stops if the identity is not in the keychain, prints
-the designated requirement and stops unless it is the certificate form signed by that
-identity. Changing the identity or its certificate, or marking it trusted (which can turn
-`certificate leaf` into `certificate root`), changes the requirement, and every user has to
-grant App Management once more. The first release signed this way does that once as well,
-coming from ad hoc.
+file that list does not name, so a new helper needs an entry there. With a Developer ID
+(`APP_SIGN_FLAGS` in the Makefile) every signature gets `--options runtime --timestamp`;
+ad hoc and self-signed builds get neither, since library validation needs a Team ID. A
+Developer ID build also re-signs the Wine binaries and libSDL2 in `Resources/`, which are
+committed ad hoc and pinned; `SignedPin.swift` keeps their pins valid (see
+[WINECX.md](WINECX.md), Shipped binaries). `release-local.sh` stops before notarizing if any
+Mach-O file in the app lacks the Developer ID or a timestamp. The app
+needs no entitlements: it sends no Apple Events (the Rosetta prompt's `do shell script` runs
+inside `osascript`) and loads only its own and Apple's code. `scripts/release-local.sh` uses
+`BRIDGEPLAY_SIGN_IDENTITY` (default `Developer ID Application: Raymond Chin (AF38EA29BA)`)
+and the notarytool profile `BRIDGEPLAY_NOTARY_PROFILE` (default `bridgeplay-notary`), stops
+before building if either is missing, checks the designated requirement, the hardened runtime
+and the timestamp, then notarizes and staples the app before zipping it. Sparkle accepts the
+change of certificate because the EdDSA key stays the same (`SUUpdateValidator`). Changing
+the team changes the requirement, and every user has to grant App Management once more; the
+first Developer ID release, coming from `Bridgeplay Release`, does that once as well.
+`installer/Install.command` accepts either signer, so an older installer zip keeps working.
 
 ### The payload helpers
 
@@ -172,9 +186,9 @@ process: macOS charges Bluetooth, Input Monitoring and the other privacy checks 
 process that started the chain, which is Steam (signed on each Mac with `NotProton Local
 Signing`, `LocalSigning.swift`) or Bridgeplay itself. Signing them with the release identity
 keeps their requirement stable all the same, should one of them ever hold a permission of
-its own. Signing does not change what loads where: a self-signed library, like an ad hoc
-one, has no Team ID, so a process with library validation refuses both and one without it
-takes both. The committed Wine and SDL binaries in `Resources/` keep their own signatures,
+its own. Signing does not change what loads where: the processes these load into (Steam,
+re-signed locally, and the Wine loaders) have no library validation, so they take a library
+from any signer. The committed Wine and SDL binaries in `Resources/` keep their own signatures,
 since their sha256 is pinned (`FreeEngineWinecx.swift`). `np-native` and
 `libnp_gamepad.dylib` are not in the app and stay ad hoc.
 
@@ -185,18 +199,28 @@ p=out/Bridgeplay.app/Contents/Resources/BridgeplayApp_BridgeplayApp.bundle/Conte
 for f in $(find "$p" -type f); do file -b "$f" | grep -q ^Mach-O && codesign -d -r- "$f" 2>&1 | grep designated; done
 ```
 
-Each line should read `identifier "<id>" and certificate leaf = H"<sha1>"`, the same hash as
-the app's. `scripts/release-local.sh` stops if any of them is not signed by the identity. The
+Each line should end in `certificate leaf[subject.OU] = AF38EA29BA`, the app's team. `scripts/release-local.sh` stops if any of them is not signed by the identity. The
 first release with signed helpers moves them from ad hoc to the certificate once; if a user
 ever granted one of them a permission directly, they grant it once more after that update.
 
-### Creating the release identity (once)
+### Setting up the Developer ID (once per Mac)
 
-```sh
-scripts/make-release-cert.sh
-```
+1. In https://developer.apple.com/account/resources/certificates/add create a **Developer ID
+   Application** certificate (G2 Sub-CA) from a CSR, download it and import it with its
+   private key into the login keychain. `security find-identity -v -p codesigning` lists it.
+2. Back it up: Keychain Access, My Certificates, Export as `.p12` with a password. Keep the
+   `.p12` and the password apart (cloud drive and password manager). On a new Mac,
+   double-click the `.p12`.
+3. Create an app-specific password at https://account.apple.com/account/manage, then
+   `xcrun notarytool store-credentials bridgeplay-notary --apple-id <id> --team-id AF38EA29BA`.
 
-It creates the self-signed `Bridgeplay Release` code signing identity (RSA 3072, 20 years)
+Renew the certificate before its expiry date (Keychain Access shows it). A renewed certificate of the
+same team keeps the designated requirement.
+
+### The old self-signed identity
+
+Releases up to the switch were signed with `Bridgeplay Release`. `scripts/make-release-cert.sh`
+still creates the self-signed `Bridgeplay Release` code signing identity (RSA 3072, 20 years)
 in the login keychain, asks for a backup password (12 characters or more) and writes
 `~/Desktop/Bridgeplay-Release.p12`. Move the `.p12` and its password into a password
 manager and delete the file from the Desktop; on a new Mac, double-click the `.p12` to

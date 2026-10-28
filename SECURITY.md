@@ -25,8 +25,8 @@ user is a hardening request, not a vulnerability, but it is still welcome as an 
 
 ## Known trade-offs
 
-- Releases are signed with a self-signed certificate (no Apple Developer ID) and not notarized, and the
-  installer removes the download's quarantine flag. Download only from https://bridgeplay.dev or GitHub.
+- Releases are signed with the maintainer's Apple Developer ID (Team AF38EA29BA) and notarized by Apple.
+  The installer still removes the quarantine flag from the folders it sets up. Download only from https://bridgeplay.dev or GitHub.
 - Steam is re-signed to load Bridgeplay, with a local "NotProton Local Signing" keychain identity or ad hoc,
   and loses Valve's hardened runtime.
 - `notproton.dylib` loads for every macOS user of a shared `/Applications/Steam.app`.

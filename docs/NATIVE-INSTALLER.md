@@ -18,11 +18,10 @@ make native-installer
 
 This builds the `BridgeplayInstaller` SwiftPM product for arm64, copies its two resource
 bundles, compiles installer translations, renders the Bridgeplay mark as the icon, signs the
-app and packages `out/Bridgeplay-Setup.zip`: the app, `READ ME FIRST.html` (Gatekeeper steps,
-with the Geist font inline), `LICENSE`, `NOTICE` and `OFL-Geist.txt`. A ZIP, not a DMG,
-because a downloaded DMG makes Gatekeeper ask twice. The default is an ad hoc local build;
-`BRIDGEPLAY_SIGN_IDENTITY` selects the maintainer's signing identity. Packaging fails above
-5 MiB unless `BRIDGEPLAY_INSTALLER_MAX_BYTES` raises the budget for a deliberate size review.
+app and packages `out/Bridgeplay-Setup.zip`: the app, `LICENSE` and `NOTICE`. The default is
+an ad hoc local build; `BRIDGEPLAY_SIGN_IDENTITY` selects the maintainer's signing identity.
+A Developer ID build also gets the hardened runtime and is notarized and stapled
+(`scripts/notarize.sh`), so macOS opens the download after a single click on Open. Packaging fails above 5 MiB unless `BRIDGEPLAY_INSTALLER_MAX_BYTES` raises the budget for a deliberate size review.
 
 CI packages the ZIP as a build artifact and runs `native-installercheck`.
 `scripts/release-local.sh` attaches it to each app release after generating the appcast, so

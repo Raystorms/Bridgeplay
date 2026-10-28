@@ -1,9 +1,7 @@
 #!/bin/sh
 # Build the small native bootstrap without Wine, GPTK or the product payload, as a ZIP with
-# the app, READ ME FIRST.html (how to get past Gatekeeper) and the licence files: LICENSE,
-# NOTICE and OFL-Geist.txt for the Geist font the page embeds. A downloaded DMG is
-# checked by Gatekeeper on its own, then the app in it again: two Open Anyway prompts. A ZIP
-# is not, so the app is the only one.
+# the app, LICENSE and NOTICE. A release build is notarized, so macOS only asks once whether
+# to open an app downloaded from the internet; the app carries its own font licences.
 set -eu
 repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
@@ -72,26 +70,26 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 cp LICENSE "$bundle/Contents/Resources/LICENSE"
-codesign --force --sign "$identity" "$bundle"
-codesign --verify --strict --deep "$bundle"
+# A Developer ID build gets the hardened runtime and a timestamp and is notarized, so the
+# downloaded installer opens without Open Anyway. Ad hoc and other identities stay as they were.
+case "$identity" in
+    "Developer ID Application: "*)
+        codesign --force --sign "$identity" --options runtime --timestamp "$bundle"
+        codesign --verify --strict --deep "$bundle"
+        "$repo/scripts/notarize.sh" "$bundle"
+        ;;
+    *)
+        codesign --force --sign "$identity" "$bundle"
+        codesign --verify --strict --deep "$bundle"
+        ;;
+esac
 # Only replace previous local packaging outputs after a complete bundle is available.
 rm -rf "$app"
 ditto "$bundle" "$app"
-# READ ME FIRST.html carries its Geist font inline, so it is one file.
 package="$stage/package"
 mkdir -p "$package"
 ditto "$app" "$package/Bridgeplay Installer.app"
-python3 - "$repo/installer/native/READ ME FIRST.html" "$repo/app/Sources/BridgeplayUI/Resources/Fonts" "$package/READ ME FIRST.html" <<'PYTHON'
-import base64
-import pathlib
-import re
-import sys
-page, fonts, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
-def font(match):
-    return "data:font/woff2;base64," + base64.b64encode((fonts / (match.group(1) + ".woff2")).read_bytes()).decode()
-out.write_text(re.sub(r"\{\{font:(\w+)\}\}", font, page.read_text()))
-PYTHON
-cp LICENSE NOTICE app/Sources/BridgeplayUI/Resources/Fonts/OFL-Geist.txt "$package/"
+cp LICENSE NOTICE "$package/"
 rm -f "$zip"
 (cd "$package" && ditto -c -k --norsrc --noextattr . "$zip")
 size=$(stat -f '%z' "$zip")
