@@ -61,6 +61,10 @@ final class SetupAssistant {
     // Finish
     var tasks: [SetupTask] = SetupAssistant.plannedTasks
     var needsAppManagement = false
+    // The tool already set up in Steam, while Setup offers Repair Steam to remove it.
+    var needsSteamRepair: String?
+    // A repair stopped for App Management, resumed once it's granted.
+    @ObservationIgnored private(set) var repairPending = false
     @ObservationIgnored private var permissionWatch: Task<Void, Never>?
 
     // Done: two of the settings for every game (GameDefaults); the rest are on the Game Defaults page.
@@ -272,6 +276,8 @@ final class SetupAssistant {
         isWorking = true
         defer { isWorking = false }
         needsAppManagement = false
+        needsSteamRepair = nil
+        repairPending = false
         message = nil
         tasks = Self.plannedTasks
 
@@ -297,10 +303,10 @@ final class SetupAssistant {
         await status.installIntoSteam()
         if let failure = status.failure {
             if status.failureRemedy == .appManagement {
-                needsAppManagement = true
-                set("steam", .failed(String(localized: "macOS needs your permission first.")))
-                openAppManagement()
-                watchPermission(status)
+                askForAppManagement(status)
+            } else if let tool = (status.lastRunError as? SteamInstaller.ForeignInsert)?.tool {
+                needsSteamRepair = tool
+                set("steam", .failed(String(localized: "\(tool) is already set up in Steam.")))
             } else {
                 set("steam", .failed(failure))
             }
@@ -368,6 +374,54 @@ final class SetupAssistant {
         tasks[index].state = state
     }
 
+    // Repair Steam swaps in Valve's bundle, which also needs App Management.
+    func repairSteamAndRetry(with status: SystemStatus,
+                             repair: @MainActor (SystemStatus) async -> Void = { await $0.repairSteam() }) async {
+        guard !isWorking else { return }
+        // perform() drops a run that overlaps another without a failure, which would read as success.
+        guard !status.isBusy else {
+            set("steam", .failed(String(localized: "Bridgeplay is still busy with another task. Try again when it finishes.")))
+            return
+        }
+        isWorking = true
+        // A card left from an earlier attempt would hide this attempt's error and its Report button.
+        permissionWatch?.cancel()
+        permissionWatch = nil
+        needsAppManagement = false
+        needsSteamRepair = nil
+        repairPending = false
+        set("steam", .running)
+        await repair(status)
+        isWorking = false
+        if let failure = status.failure {
+            if repairFailed(failure, remedy: status.failureRemedy) {
+                openAppManagement()
+                watchPermission(status)
+            }
+            return
+        }
+        await finish(with: status)
+    }
+
+    // Shows why a repair failed; true when it waits for App Management and resumes after.
+    func repairFailed(_ failure: String, remedy: Remedy?) -> Bool {
+        guard remedy == .appManagement else {
+            set("steam", .failed(failure))
+            return false
+        }
+        needsAppManagement = true
+        repairPending = true
+        set("steam", .failed(String(localized: "macOS needs your permission first.")))
+        return true
+    }
+
+    private func askForAppManagement(_ status: SystemStatus) {
+        needsAppManagement = true
+        set("steam", .failed(String(localized: "macOS needs your permission first.")))
+        openAppManagement()
+        watchPermission(status)
+    }
+
     func openAppManagement() {
         if let pane = Remedy.appManagement.settingsPane { Remedy.openSettings(pane) }
     }
@@ -379,12 +433,24 @@ final class SetupAssistant {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, self.needsAppManagement else { return }
-                if Self.canWriteSteam() {
-                    await self.finish(with: status)
-                    return
-                }
+                if await self.resumeAfterPermission(status, canWrite: Self.canWriteSteam()) { return }
             }
         }
+    }
+
+    // One poll of the watch; false keeps it polling. A pending repair also waits while another
+    // run is in flight, since the repair would refuse it and nothing would retry.
+    func resumeAfterPermission(_ status: SystemStatus, canWrite: Bool,
+                               repair: @MainActor (SystemStatus) async -> Void = { await $0.repairSteam() }) async -> Bool {
+        guard canWrite, !(repairPending && status.isBusy) else { return false }
+        // Detached first, so the retry's own cancel doesn't stop this task mid-run.
+        permissionWatch = nil
+        if repairPending {
+            await repairSteamAndRetry(with: status, repair: repair)
+        } else {
+            await finish(with: status)
+        }
+        return true
     }
 
     nonisolated static func canWriteSteam(app: URL = SupportPaths.Steam.app) -> Bool {

@@ -75,6 +75,80 @@ struct SetupAssistantTests {
         #expect(!SetupAssistant.shouldShow(nil, defaults: defaults))
     }
 
+    // MARK: Repair Steam
+
+    @MainActor
+    private func steamState(_ model: SetupAssistant) -> SetupAssistant.TaskState? {
+        model.tasks.first { $0.id == "steam" }?.state
+    }
+
+    @Test("A repair that fails for another reason clears the App Management card and shows its error")
+    @MainActor
+    func repairFailureClearsCards() async {
+        let model = SetupAssistant()
+        model.needsAppManagement = true
+        model.needsSteamRepair = "Cartouche"
+        await model.repairSteamAndRetry(with: SystemStatus()) { $0.setFailure("Steam did not quit.") }
+        #expect(!model.needsAppManagement)
+        #expect(model.needsSteamRepair == nil)
+        #expect(!model.repairPending)
+        #expect(!model.isWorking)
+        #expect(steamState(model) == .failed("Steam did not quit."))
+    }
+
+    @Test("A repair stopped by App Management waits to resume; other failures don't")
+    @MainActor
+    func repairPendingOnlyForAppManagement() {
+        let waiting = SetupAssistant()
+        #expect(waiting.repairFailed("Could not write files.", remedy: .appManagement))
+        #expect(waiting.needsAppManagement)
+        #expect(waiting.repairPending)
+        #expect(steamState(waiting) == .failed("macOS needs your permission first."))
+
+        let failed = SetupAssistant()
+        #expect(!failed.repairFailed("Could not download Steam.", remedy: nil))
+        #expect(!failed.needsAppManagement)
+        #expect(!failed.repairPending)
+        #expect(steamState(failed) == .failed("Could not download Steam."))
+    }
+
+    @Test("Repair Steam says so when another run is in flight, and runs nothing")
+    @MainActor
+    func repairRefusedWhileBusy() async {
+        let model = SetupAssistant()
+        model.needsSteamRepair = "Cartouche"
+        let status = SystemStatus()
+        status.activity = "Installing"
+        var ran = false
+        await model.repairSteamAndRetry(with: status) { _ in ran = true }
+        #expect(!ran)
+        #expect(model.needsSteamRepair == "Cartouche")
+        #expect(steamState(model) == .failed("Bridgeplay is still busy with another task. Try again when it finishes."))
+    }
+
+    @Test("A repair waiting for App Management keeps waiting while Bridgeplay is busy, then resumes")
+    @MainActor
+    func repairResumesAfterBusy() async {
+        let model = SetupAssistant()
+        #expect(model.repairFailed("Could not write files.", remedy: .appManagement))
+        let status = SystemStatus()
+        status.activity = "Installing"
+        var ran = false
+        let repair: @MainActor (SystemStatus) async -> Void = { ran = true; $0.setFailure("Steam did not quit.") }
+
+        #expect(!(await model.resumeAfterPermission(status, canWrite: true, repair: repair)))
+        #expect(!ran)
+        #expect(model.needsAppManagement)
+        #expect(model.repairPending)
+        #expect(steamState(model) == .failed("macOS needs your permission first."))
+
+        status.activity = nil
+        #expect(await model.resumeAfterPermission(status, canWrite: true, repair: repair))
+        #expect(ran)
+        #expect(!model.needsAppManagement)
+        #expect(steamState(model) == .failed("Steam did not quit."))
+    }
+
     // MARK: Making WineCX Steam's default
 
     // Steam in this account, another account, or both. quits: whether it obeys steam://exit.

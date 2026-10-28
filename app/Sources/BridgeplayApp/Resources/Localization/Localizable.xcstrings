@@ -321,6 +321,54 @@
         }
       }
     },
+    "%@ is already set up in Steam, and Bridgeplay won't install on top of it. Repair Steam to remove it, then try again." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ è già configurato in Steam e Bridgeplay non si installa sopra. Ripara Steam per rimuoverlo, poi riprova."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 已在 Steam 中设置，Bridgeplay 不会覆盖安装。请修复 Steam 将其移除，然后重试。"
+          }
+        }
+      }
+    },
+    "%@ is already set up in Steam." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ è già configurato in Steam."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 已在 Steam 中设置。"
+          }
+        }
+      }
+    },
+    "%@ is already set up in Steam. Repair Steam to remove it, and Setup continues by itself." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ è già configurato in Steam. Ripara Steam per rimuoverlo e la configurazione prosegue da sola."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 已在 Steam 中设置。修复 Steam 即可将其移除，设置会自动继续。"
+          }
+        }
+      }
+    },
     "%@ is left from a rebuild that did not finish and may hold the only copy of the saves. Move it somewhere safe, then try again." : {
       "localizations" : {
         "it" : {
@@ -541,6 +589,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 重新签名后缺少 dyld 授权项。"
+          }
+        }
+      }
+    },
+    "%@ will stop working in Steam, and Steam may quit for a moment." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ smetterà di funzionare in Steam, e Steam potrebbe chiudersi per un momento."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 将无法在 Steam 中使用，Steam 可能会短暂退出。"
           }
         }
       }
@@ -1432,38 +1496,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "即将就绪"
-          }
-        }
-      }
-    },
-    "Another dylib is present." : {
-      "localizations" : {
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "È presente un'altra dylib."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "检测到其他动态库。"
-          }
-        }
-      }
-    },
-    "Another dylib is present. Repair your Steam install before installing Bridgeplay." : {
-      "localizations" : {
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "È presente un'altra dylib. Ripara l'installazione di Steam prima di installare Bridgeplay."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "检测到其他动态库。请先修复 Steam，再安装 Bridgeplay。"
           }
         }
       }
@@ -2475,6 +2507,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bridgeplay 正在重建此游戏的游戏容器。"
+          }
+        }
+      }
+    },
+    "Bridgeplay is still busy with another task. Try again when it finishes." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridgeplay sta ancora eseguendo un'altra operazione. Riprova quando ha finito."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridgeplay 仍在执行另一项任务。完成后再试一次。"
           }
         }
       }
@@ -7970,18 +8018,18 @@
         }
       }
     },
-    "Repair your Steam install before installing Bridgeplay." : {
+    "Repair Steam to remove it, then install Bridgeplay." : {
       "localizations" : {
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ripara l'installazione di Steam prima di installare Bridgeplay."
+            "value" : "Ripara Steam per rimuoverlo, poi installa Bridgeplay."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "请先修复 Steam，再安装 Bridgeplay。"
+            "value" : "请修复 Steam 将其移除，然后安装 Bridgeplay。"
           }
         }
       }
@@ -9553,6 +9601,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Steam 已配置为注入其他动态库。请先修复 Steam，再安装 Bridgeplay。"
+          }
+        }
+      }
+    },
+    "Steam needs repair" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam va riparato"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam 需要修复"
           }
         }
       }
