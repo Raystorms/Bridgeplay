@@ -134,15 +134,17 @@ public struct BridgeShape: Shape {
 
     public func path(in rect: CGRect) -> Path {
         let s = min(rect.width, rect.height) / 24
+        // 2.04, not 2.4, puts the drawn mark (strokes included) in the middle of the box.
         func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + (2.4 + x * 0.8) * s, y: rect.minY + (2.4 + y * 0.8) * s)
+            CGPoint(x: rect.minX + (2.4 + x * 0.8) * s, y: rect.minY + (2.04 + y * 0.8) * s)
         }
         var path = Path()
         switch part {
         case .deck:
+            // The towers stop at 4.6, under the cable, so no cap shows around its peaks.
             path.move(to: p(2, 14)); path.addLine(to: p(22, 14))
-            path.move(to: p(6.5, 4)); path.addLine(to: p(6.5, 14))
-            path.move(to: p(17.5, 4)); path.addLine(to: p(17.5, 14))
+            path.move(to: p(6.5, 4.6)); path.addLine(to: p(6.5, 14))
+            path.move(to: p(17.5, 4.6)); path.addLine(to: p(17.5, 14))
         case .cable:
             path.move(to: p(2, 7))
             path.addCurve(to: p(6.5, 4), control1: p(4.5, 7), control2: p(5.5, 4))
@@ -150,13 +152,15 @@ public struct BridgeShape: Shape {
             path.addCurve(to: p(17.5, 4), control1: p(14.5, 11), control2: p(16.5, 4))
             path.addCurve(to: p(22, 7), control1: p(18.5, 4), control2: p(19.5, 7))
         case .echo:
-            path.move(to: p(6.5, 16.5)); path.addLine(to: p(6.5, 19.5))
-            path.move(to: p(17.5, 16.5)); path.addLine(to: p(17.5, 19.5))
+            // One smooth arch: it keeps sloping where it meets the pillars instead of
+            // flattening into a step, and the pillars end on it.
+            path.move(to: p(6.5, 16.5)); path.addLine(to: p(6.5, 19.4))
+            path.move(to: p(17.5, 16.5)); path.addLine(to: p(17.5, 19.4))
             path.move(to: p(2, 21))
-            path.addCurve(to: p(6.5, 19.4), control1: p(4.5, 21), control2: p(5.5, 19.4))
-            path.addCurve(to: p(12, 17.3), control1: p(7.5, 19.4), control2: p(9.5, 17.3))
-            path.addCurve(to: p(17.5, 19.4), control1: p(14.5, 17.3), control2: p(16.5, 19.4))
-            path.addCurve(to: p(22, 21), control1: p(18.5, 19.4), control2: p(19.5, 21))
+            path.addCurve(to: p(6.5, 19.4), control1: p(3.5, 21), control2: p(5, 19.955))
+            path.addCurve(to: p(12, 17.3), control1: p(8.33, 18.72), control2: p(10.17, 17.3))
+            path.addCurve(to: p(17.5, 19.4), control1: p(13.83, 17.3), control2: p(15.67, 18.72))
+            path.addCurve(to: p(22, 21), control1: p(19, 19.955), control2: p(20.5, 21))
         }
         return path
     }
@@ -181,6 +185,45 @@ public struct BridgeplayMark: View {
     }
 
     public var body: some View {
+        BridgeStrokes(size: size)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous).fill(.black))
+            .overlay(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous).strokeBorder(BP.lineStrong, lineWidth: 1))
+            .accessibilityHidden(true)
+    }
+}
+
+// The mark on the app icon's glass tile. Shown on its own only, never next to the wordmark.
+public struct GlassMark: View {
+    public var size: CGFloat
+
+    public init(size: CGFloat) {
+        self.size = size
+    }
+
+    public var body: some View {
+        let tile = RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
+        ZStack {
+            tile.fill(LinearGradient(stops: [.init(color: Color(hex: 0x232326), location: 0),
+                                             .init(color: Color(hex: 0x0B0B0D), location: 0.7),
+                                             .init(color: Color(hex: 0x060607), location: 1)],
+                                     startPoint: .top, endPoint: .bottom))
+            tile.fill(RadialGradient(colors: [.white.opacity(0.16), .clear], center: UnitPoint(x: 0.5, y: -0.1),
+                                     startRadius: 0, endRadius: size * 0.66))
+            BridgeStrokes(size: size)
+                .shadow(color: .black.opacity(0.6), radius: size * 0.012, y: size * 0.01)
+        }
+        .frame(width: size, height: size)
+        .overlay(tile.strokeBorder(.white.opacity(0.13), lineWidth: 1))
+        .shadow(color: .black.opacity(0.7), radius: size * 0.08, y: size * 0.05)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct BridgeStrokes: View {
+    let size: CGFloat
+
+    var body: some View {
         ZStack {
             BridgeShape(part: .deck)
                 .stroke(BP.fg, style: StrokeStyle(lineWidth: BridgeShape.width(.deck, size: size), lineCap: .round))
@@ -189,9 +232,5 @@ public struct BridgeplayMark: View {
             BridgeShape(part: .echo)
                 .stroke(BP.fg.opacity(0.35), style: StrokeStyle(lineWidth: BridgeShape.width(.echo, size: size), lineCap: .round))
         }
-        .frame(width: size, height: size)
-        .background(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous).fill(.black))
-        .overlay(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous).strokeBorder(BP.lineStrong, lineWidth: 1))
-        .accessibilityHidden(true)
     }
 }
