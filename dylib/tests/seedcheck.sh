@@ -3,7 +3,7 @@ set -eu
 SRC="${1:-$(dirname "$0")/../feats/compat_run.sh}"
 work=$(mktemp -d "${TMPDIR:-/tmp}/np-seedcheck.XXXXXX")
 test "$(stat -f %d "$work")" = "$(stat -f %d "${TMPDIR:-/tmp}")"
-trap 'chmod -R u+rwX "$work"; rm -rf "$work"' EXIT
+trap '[ ! -d "$work/hfs" ] || /usr/bin/hdiutil detach -quiet -force "$work/hfs"; chmod -R u+rwX "$work"; rm -rf "$work"' EXIT
 cut_block() {
   from="$1" to="$2" keep="$3" awk '
     BEGIN { from = ENVIRON["from"]; to = ENVIRON["to"]; keep = ENVIRON["keep"] }
@@ -90,41 +90,102 @@ check test -f "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
 check test -f "$WINEPREFIX/.update-timestamp"
 check test -f "$WINEPREFIX/system.reg"
 check test ! "$template_dir/pfx/drive_c/windows/ntdll.dll" -ef "$WINEPREFIX/drive_c/windows/ntdll.dll"
-printf changed > "$WINEPREFIX/drive_c/windows/ntdll.dll"
+check test "$(stat -f %l "$WINEPREFIX/drive_c/windows/ntdll.dll")" = 1
+check test "$(stat -f %l "$WINEPREFIX/system.reg")" = 1
+check test ! -e "$WINEPREFIX/.notproton-seed-target"
+check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
+check test "$(find "$template_dir/pfx" | wc -l)" -eq "$(find "$WINEPREFIX" -path "$WINEPREFIX/drive_c/users/steamuser/Documents/Game*" -prune -o -print | wc -l)"
+first_prefix="$WINEPREFIX"
+STEAM_COMPAT_DATA_PATH="$case_root/next-game"
+WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
+mkdir -p "$WINEPREFIX"
+copy_template_into_prefix
+check test ! "$first_prefix/drive_c/windows/ntdll.dll" -ef "$WINEPREFIX/drive_c/windows/ntdll.dll"
+printf changed > "$first_prefix/drive_c/windows/ntdll.dll"
+printf changed >> "$first_prefix/system.reg"
 check test "$(cat "$template_dir/pfx/drive_c/windows/ntdll.dll")" = dll
+check test "$(cat "$WINEPREFIX/drive_c/windows/ntdll.dll")" = dll
+check test "$(cat "$template_dir/pfx/system.reg")" = reg
+check test "$(cat "$WINEPREFIX/system.reg")" = reg
 
-fixture
-mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
-printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
-interrupted_status=0
-env functions="$functions" /bin/sh -c "
-  eval \"\$functions\"
-  ln() { command ln \"\$@\"; kill -KILL \"\$\$\"; return 1; }
-  copy_template_into_prefix
-" || interrupted_status=$?
-check test "$interrupted_status" -eq 137
-check test -f "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
-check test ! -e "$WINEPREFIX/.update-timestamp"
-check test ! -e "$WINEPREFIX/system.reg"
-for abandoned in "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*; do
-  check test -d "$abandoned"
+# Killed after it moved $1 entries in: the launch and its merge both die on the spot.
+kill_seed_after() {
+  env functions="$functions" moves="$1" /bin/sh -c "
+    eval \"\$functions\"
+    mv() {
+      if [ \"\$moves\" -eq 0 ]; then kill -KILL \"\$\$\"; exec /usr/bin/true; fi
+      moves=\$((moves - 1))
+      command mv \"\$@\"
+    }
+    copy_template_into_prefix
+  "
+}
+seeded_whole() {
+  test -f "$WINEPREFIX/system.reg" && test -f "$WINEPREFIX/.update-timestamp" \
+    && test "$(cat "$WINEPREFIX/drive_c/windows/ntdll.dll")" = dll \
+    && test "$(readlink "$WINEPREFIX/drive_c/users/crossover")" = steamuser \
+    && test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav")" = save \
+    && test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
+}
+for moved in 0 1 2; do
+  fixture
+  mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+  printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+  interrupted_status=0
+  { kill_seed_after "$moved"; } 2>/dev/null || interrupted_status=$?
+  check test "$interrupted_status" -eq 137
+  check test ! -e "$WINEPREFIX/system.reg"
+  check test -f "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+  check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 1
   seed_prefix_from_template
-  check test ! -e "$abandoned"
+  check seeded_whole
+  check grep -q 'finished seeding this prefix' "$log"
 done
 
+# A prefix rebuilt since the seed was killed is seeded again, not finished with the leftovers.
 fixture
 mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
 printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
-interrupted_status=0
-env functions="$functions" /bin/sh -c "
-  eval \"\$functions\"
-  ln() { command ln \"\$@\"; kill -TERM \"\$\$\"; return 1; }
-  trap 'abandon_seed 143' TERM
-  copy_template_into_prefix
-" || interrupted_status=$?
-check test "$interrupted_status" -eq 143
-check test -f "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
-check test ! -e "$WINEPREFIX/.update-timestamp"
+{ kill_seed_after 1; } 2>/dev/null || true
+mv "$WINEPREFIX" "$case_root/old-pfx"
+mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+finish_dead_seeds
+check prefix_is_bare
+copy_template_into_prefix
+check seeded_whole
+check test ! -e "$case_root/old-pfx/system.reg"
+check test "$(grep -c 'finished seeding this prefix' "$log" || true)" = 0
+
+# Killed while cloning, before the merge: the prefix was never touched.
+fixture
+mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+/bin/sh -c 'exit 0' &
+dead=$!
+wait "$dead"
+mkdir "$STEAM_COMPAT_DATA_PATH/pfx.seeding.$dead"
+printf partial > "$STEAM_COMPAT_DATA_PATH/pfx.seeding.$dead/system.reg"
+finish_dead_seeds
+check prefix_is_bare
+copy_template_into_prefix
+check seeded_whole
+check test "$(cat "$WINEPREFIX/system.reg")" = reg
+
+for signal in TERM:143 INT:130 HUP:129; do
+  fixture
+  mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+  printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+  interrupted_status=0
+  env functions="$functions" signal="${signal%:*}" status="${signal#*:}" /bin/sh -c "
+    eval \"\$functions\"
+    mv() { command mv \"\$@\"; kill -\"\$signal\" \"\$\$\"; }
+    trap \"abandon_seed \$status\" \"\$signal\"
+    copy_template_into_prefix
+  " || interrupted_status=$?
+  check test "$interrupted_status" -eq "${signal#*:}"
+  check seeded_whole
+done
 
 fixture
 mkdir -p "$template_dir/pfx.building.$$"
@@ -184,11 +245,57 @@ fixture
 mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
 printf original > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/save"
 (
-  eval 'ln() { return 1; }'
+  eval 'mv() { return 1; }'
   copy_template_into_prefix
 )
 check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/save")" = original
 check test ! -e "$WINEPREFIX/system.reg"
+check test ! -e "$WINEPREFIX/drive_c/windows"
+check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
+
+# A library on another volume, here HFS+, gets a full copy that shares nothing with the template.
+fixture
+/usr/bin/hdiutil create -quiet -size 16m -fs HFS+ -volname np-seedcheck "$work/hfs.dmg"
+mkdir "$work/hfs"
+/usr/bin/hdiutil attach -quiet -nobrowse -mountpoint "$work/hfs" "$work/hfs.dmg"
+check test "$(stat -f %d "$work/hfs")" != "$(stat -f %d "$template_dir")"
+STEAM_COMPAT_DATA_PATH="$work/hfs/game"
+WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
+mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+copy_template_into_prefix
+check seeded_whole
+check grep -q 'copied this prefix from the .* template, not a clone' "$log"
+check test "$(stat -f %l "$WINEPREFIX/drive_c/windows/ntdll.dll")" = 1
+printf changed > "$WINEPREFIX/drive_c/windows/ntdll.dll"
+check test "$(cat "$template_dir/pfx/drive_c/windows/ntdll.dll")" = dll
+/usr/bin/hdiutil detach -quiet -force "$work/hfs"
+rmdir "$work/hfs"
+
+# A conflict anywhere moves nothing in.
+fixture
+mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+printf original > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/save"
+printf file > "$WINEPREFIX/drive_c/users/steamuser/AppData"
+copy_template_into_prefix
+check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/save")" = original
+check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/AppData")" = file
+check test ! -e "$WINEPREFIX/drive_c/windows"
+check test ! -e "$WINEPREFIX/system.reg"
+check test ! -e "$WINEPREFIX/drive_c/users/steamuser/Desktop"
+
+# The player's files win over the template's, as they always did.
+fixture
+mkdir -p "$template_dir/pfx/drive_c/users/steamuser/Documents/Game" \
+  "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+printf template > "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/save"
+printf template > "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/other"
+printf player > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/save"
+copy_template_into_prefix
+check test -f "$WINEPREFIX/system.reg"
+check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/save")" = player
+check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/other")" = template
+check test "$(cat "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/save")" = template
 
 fixture
 mkdir -p "$WINEPREFIX/dosdevices"

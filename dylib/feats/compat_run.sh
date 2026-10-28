@@ -1938,6 +1938,7 @@ in_template_env() {
 
 seed_scratch=""
 seed_building=0
+seed_merging=0
 # shellcheck disable=SC2329 # the traps in seed_prefix_from_template invoke this
 abandon_seed() {
   if [ -n "$seed_scratch" ]; then
@@ -1945,7 +1946,10 @@ abandon_seed() {
       in_template_env "$seed_scratch" "$WINESERVER" -k >/dev/null 2>&1 || true
       in_template_env "$seed_scratch" "$WINESERVER" -w >/dev/null 2>&1 || exit "$1"
     fi
-    rm -rf "$seed_scratch" 2>/dev/null || true
+    # Half moved into the prefix: finish now, or keep the rest for the next launch to finish.
+    if [ "$seed_merging" -eq 0 ] || merge_seed_tree move; then
+      rm -rf "$seed_scratch" 2>/dev/null || true
+    fi
   fi
   exit "$1"
 }
@@ -2028,7 +2032,13 @@ build_prefix_template() {
   [ -f "$template_dir/pfx/system.reg" ]
 }
 
-install_seed_tree() (
+# Moves the cloned template into the prefix, one rename per entry. It only descends into
+# folders the prefix already has (the Steam profile and dosdevices), so most of the tree
+# moves at once. "check" moves nothing and fails where "move" would. system.reg goes in
+# last: until it does, the prefix is not seeded.
+merge_seed_tree() (
+  mode=$1
+  same_volume "$seed_scratch" "$WINEPREFIX" || return 1
   set -- ""
   while [ "$#" -gt 0 ]; do
     relative=$1
@@ -2041,38 +2051,35 @@ install_seed_tree() (
       [ -e "$source" ] || [ -L "$source" ] || continue
       name=${source##*/}
       if [ -z "$relative" ]; then
-        case "$name" in system.reg|.update-timestamp) continue ;; esac
+        case "$name" in system.reg|.update-timestamp|.notproton-seed-target) continue ;; esac
       fi
       target="$target_dir/$name"
-      if [ -d "$source" ] && [ ! -L "$source" ]; then
-        if [ ! -e "$target" ] && [ ! -L "$target" ]; then
-          mkdir "$target" || return 1
-        fi
+      if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+        [ -w "$target_dir" ] || return 1
+        [ "$mode" = check ] || mv "$source" "$target" || return 1
+      elif [ -d "$source" ] && [ ! -L "$source" ]; then
         [ -d "$target" ] && [ ! -L "$target" ] || return 1
         set -- "$@" "$relative/$name"
-      elif [ -e "$target" ] || [ -L "$target" ]; then
+      else
         case "$relative/$name" in
           /drive_c/users/steamuser/*) continue ;;
         esac
         [ -L "$source" ] && [ -L "$target" ] \
           && [ "$(readlink "$source")" = "$(readlink "$target")" ] || return 1
-      elif [ -L "$source" ]; then
-        ln -sh "$(readlink "$source")" "$target" || return 1
-        [ -L "$target" ] && [ "$(readlink "$source")" = "$(readlink "$target")" ] || return 1
-      elif [ -f "$source" ]; then
-        ln -h "$source" "$target" || return 1
-        [ ! -L "$target" ] && [ "$source" -ef "$target" ] || return 1
-      else
-        return 1
       fi
     done
   done
-  ln -h "$seed_scratch/system.reg" "$WINEPREFIX/system.reg" \
-    && [ ! -L "$WINEPREFIX/system.reg" ] \
-    && [ "$seed_scratch/system.reg" -ef "$WINEPREFIX/system.reg" ] || return 1
-  if [ -f "$seed_scratch/.update-timestamp" ]; then
-    ln -h "$seed_scratch/.update-timestamp" "$WINEPREFIX/.update-timestamp" || return 1
-  fi
+  for name in system.reg .update-timestamp; do
+    source="$seed_scratch/$name"
+    target="$WINEPREFIX/$name"
+    if [ -f "$source" ] && [ ! -L "$source" ]; then
+      [ ! -e "$target" ] && [ ! -L "$target" ] && [ -w "$WINEPREFIX" ] || return 1
+      [ "$mode" = check ] || mv "$source" "$target" || return 1
+    elif [ -e "$source" ] || [ -L "$source" ]; then
+      return 1
+    fi
+  done
+  [ "$mode" = check ] || { [ -f "$WINEPREFIX/system.reg" ] && [ ! -L "$WINEPREFIX/system.reg" ]; }
 )
 
 copy_template_into_prefix() {
@@ -2089,14 +2096,47 @@ copy_template_into_prefix() {
     how="copied this prefix from the $runner_id template, not a clone"
     cp -R "$template_dir/pfx/." "$seed_scratch" 2>/dev/null && copied=0 || copied=$?
   fi
-  if [ "$copied" -eq 0 ] && prefix_is_bare && install_seed_tree; then
-    echo "=== $how ===" >> "$log" 2>&1 || true
+  # The target lets a later launch finish a merge this one could not, into this prefix only.
+  if [ "$copied" -eq 0 ] && prefix_is_bare \
+    && stat -f '%d:%i' "$WINEPREFIX" > "$seed_scratch/.notproton-seed-target" 2>/dev/null \
+    && merge_seed_tree check; then
+    seed_merging=1
+    if merge_seed_tree move; then
+      echo "=== $how ===" >> "$log" 2>&1 || true
+    else
+      echo "=== could not finish seeding from the template, wine completes this prefix ===" \
+        >> "$log" 2>&1 || true
+    fi
+    seed_merging=0
   else
     echo "=== could not seed from the template, wine builds this prefix itself ===" \
       >> "$log" 2>&1 || true
   fi
   rm -rf "$seed_scratch" 2>/dev/null || true
   seed_scratch=""
+}
+
+# A launch killed while it moved the template in left the rest in its staging folder.
+finish_dead_seeds() {
+  for leftover in "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*; do
+    [ -d "$leftover" ] && [ ! -L "$leftover" ] || continue
+    case "${leftover##*.}" in ''|0|*[!0-9]*) continue ;; esac
+    [ "$(stat -f %u "$leftover" 2>/dev/null)" = "$(id -u)" ] || continue
+    kill -0 "${leftover##*.}" 2>/dev/null && continue
+    [ -f "$leftover/.notproton-seed-target" ] || continue
+    [ "$(cat "$leftover/.notproton-seed-target" 2>/dev/null)" \
+      = "$(stat -f '%d:%i' "$WINEPREFIX" 2>/dev/null)" ] || continue
+    seed_scratch=$leftover
+    if merge_seed_tree check && merge_seed_tree move; then
+      echo "=== finished seeding this prefix, which an earlier launch left half done ===" \
+        >> "$log" 2>&1 || true
+    else
+      echo "=== could not finish an earlier launch's seed, wine completes this prefix ===" \
+        >> "$log" 2>&1 || true
+    fi
+    seed_scratch=""
+  done
+  sweep_dead_seeds "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*
 }
 
 prefix_is_bare() (
@@ -2149,7 +2189,7 @@ template_identity() (
 # Each game's prefix is copied from one template (per runner) instead of running wineboot.
 # On APFS the copy is a clone, so it takes almost no space.
 seed_prefix_from_template() {
-  sweep_dead_seeds "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*
+  finish_dead_seeds
   [ -n "$runner_id" ] || return 0
   if ! prefix_is_bare; then
     [ -f "$WINEPREFIX/system.reg" ] \
