@@ -2033,10 +2033,15 @@ build_prefix_template() {
 }
 
 # Puts one staged entry at a free name in the prefix, never over something that appeared
-# there since the check: link(2) and symlink(2) refuse an existing name.
+# there since the check: link(2) and symlink(2) refuse an existing name, and a folder that
+# appeared takes ours inside it, which goes back to staging.
 place_seed_entry() {
   if [ -d "$1" ] && [ ! -L "$1" ]; then
-    mv -n "$1" "$2" && [ ! -e "$1" ]
+    staged=$(stat -f %i "$1") || return 1
+    mv -n "$1" "$2" || return 1
+    [ "$(stat -f %i "$2" 2>/dev/null)" != "$staged" ] || return 0
+    [ "$(stat -f %i "$2/${1##*/}" 2>/dev/null)" != "$staged" ] || mv -n "$2/${1##*/}" "$1"
+    return 1
   elif [ -L "$1" ]; then
     ln -s "$(readlink "$1")" "$2" && [ -L "$2" ] \
       && [ "$(readlink "$1")" = "$(readlink "$2")" ] && rm -f "$1"

@@ -171,6 +171,27 @@ printf template > "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/slot
 check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav")" = player
 check test ! -e "$WINEPREFIX/system.reg"
 
+# Nor does a folder that appears after the check end up holding the template's inside it.
+fixture
+mkdir -p "$template_dir/pfx/drive_c/users/steamuser/Documents/Game" \
+  "$WINEPREFIX/drive_c/users/steamuser/Documents"
+printf template > "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/default.ini"
+(
+  eval 'mv() {
+    for destination; do :; done
+    case "$destination" in */pfx/drive_c/users/steamuser/Documents/Game)
+      mkdir "$destination" && printf player > "$destination/slot.sav" ;;
+    esac
+    command mv "$@"
+  }'
+  copy_template_into_prefix
+) 2>/dev/null
+check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav")" = player
+check test ! -e "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/Game"
+check test ! -e "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/default.ini"
+check test ! -e "$WINEPREFIX/system.reg"
+check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
+
 # A prefix rebuilt since the seed was killed is seeded again, not finished with the leftovers.
 fixture
 mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
