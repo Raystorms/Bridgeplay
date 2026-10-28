@@ -210,13 +210,19 @@ struct TemplateCleanupTests {
         defer { close(fd) }
         try #require(flock(fd, LOCK_EX | LOCK_NB) == 0)
         let status = SystemStatus()
+        // This test's own lock, never the one Bridgeplay holds on this Mac while it installs.
+        let lock: @Sendable () throws -> DeploymentContent.InstallationLock = {
+            try DeploymentContent.acquireInstallationLock(in: layout.root, steamFolder: nil)
+        }
 
-        await status.refreshRunnerStorage(runners: layout.runners, libraries: [layout.library])
+        await status.refreshRunnerStorage(runners: layout.runners, libraries: [layout.library],
+                                          acquireInstallationLock: lock)
         #expect(status.templateCleanupFailure == nil)
         #expect(FileManager.default.fileExists(atPath: layout.template.path))
 
         try #require(flock(fd, LOCK_UN) == 0)
-        await status.refreshRunnerStorage(runners: layout.runners, libraries: [layout.library])
+        await status.refreshRunnerStorage(runners: layout.runners, libraries: [layout.library],
+                                          acquireInstallationLock: lock)
         #expect(status.templateCleanupFailure == nil)
         #expect(!FileManager.default.fileExists(atPath: layout.template.path))
         #expect(FileManager.default.fileExists(atPath: layout.lock.path))
@@ -231,13 +237,19 @@ struct TemplateCleanupTests {
         let unmounted = layout.root.appending(path: "unmounted-library")
         try FileManager.default.moveItem(at: layout.library.root, to: unmounted)
         let status = SystemStatus()
+        // This test's own lock, never the one Bridgeplay holds on this Mac while it installs.
+        let lock: @Sendable () throws -> DeploymentContent.InstallationLock = {
+            try DeploymentContent.acquireInstallationLock(in: layout.root, steamFolder: nil)
+        }
 
-        await status.refreshRunnerStorage(runners: layout.runners, libraries: [layout.library])
+        await status.refreshRunnerStorage(runners: layout.runners, libraries: [layout.library],
+                                          acquireInstallationLock: lock)
         #expect(!FileManager.default.fileExists(atPath: layout.library.root.path))
         #expect(status.templateCleanupFailure == nil)
 
         try FileManager.default.moveItem(at: unmounted, to: layout.library.root)
-        await status.refreshRunnerStorage(runners: layout.runners, libraries: [layout.library])
+        await status.refreshRunnerStorage(runners: layout.runners, libraries: [layout.library],
+                                          acquireInstallationLock: lock)
         #expect(!FileManager.default.fileExists(atPath: layout.template.path))
         #expect(status.templateCleanupFailure == nil)
     }
