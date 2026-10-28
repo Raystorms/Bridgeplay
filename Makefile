@@ -646,6 +646,10 @@ deploy: $(TARGET) dylib-install sigdb-install fonts-install helpers-install pref
 		echo "==> deploy: $(STEAM_APP) not found"; exit 1; fi
 	$(call install_atomically,$(TARGET),$(DEPLOY_DST))
 	@echo "==> Deployed: $(DEPLOY_DST) (restart Steam to load)"
+	@# The app's build record no longer matches Steam's dylib, and the app refuses to install over
+	@# a mismatch. Set it aside so the next app install sees an update instead.
+	@r="$(SUPPORT_DIR)/install-build.json"; \
+	if [ -f "$$r" ]; then mv -f "$$r" "$$r.before-deploy" && echo "==> Moved the app's build record to $$r.before-deploy"; fi
 	@for b in $(LAUNCHABLE_BUNDLES); do \
 		p=$$(find "$$b" -name notproton.dylib -type f 2>/dev/null | head -1); \
 		[ -n "$$p" ] || continue; \
