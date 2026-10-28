@@ -86,6 +86,26 @@ struct LaunchProgressTests {
         #expect(!LaunchProgressWatcher.holdsOpen(device: file.st_dev, inode: file.st_ino, pid: -1))
     }
 
+    @Test("A process is known by its start time, so a reused pid is looked at again")
+    func startTimes() throws {
+        let own = LaunchProgressWatcher.startTime(of: getpid())
+        #expect(own != nil)
+        #expect(LaunchProgressWatcher.startTime(of: getpid()) == own)
+        #expect(LaunchProgressWatcher.startTime(of: -1) == nil)
+        let child = Process()
+        child.executableURL = URL(filePath: "/bin/sleep")
+        child.arguments = ["5"]
+        try child.run()
+        defer { child.terminate() }
+        #expect(LaunchProgressWatcher.startTime(of: child.processIdentifier) != own)
+    }
+
+    // The run script checks the app binary for the flag before passing it.
+    @Test("The flag is long enough to sit in the binary's strings")
+    func flagIsFindable() {
+        #expect(LaunchProgressCommand.flag.utf8.count > 15)
+    }
+
     @Test("The game is named from its library's appmanifest")
     func namesTheGame() throws {
         let dir = try scratchDirectory("launch")

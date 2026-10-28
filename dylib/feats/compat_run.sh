@@ -1023,11 +1023,12 @@ launch_progress() {
   launch_step_file="$STEAM_COMPAT_DATA_PATH/bridgeplay-launch-step"
   launch_step "$1"
   progress_app=$(cat "$np_support/app-executable" 2>/dev/null) || progress_app=""
-  if [ -x "$progress_app" ]; then
+  # An app from before the panel would open its main window for a flag it does not know.
+  if [ -x "$progress_app" ] && LC_ALL=C grep -q -a -F -- --launch-progress "$progress_app" 2>/dev/null; then
     # A child of this script, so the panel can tell when the script is gone.
     env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
       "$progress_app" --launch-progress "$STEAM_COMPAT_DATA_PATH" "$prefix_was_new" \
-      "$np_support/launchers/$app_id/bridgeplay-wine.log" \
+      "$np_support/launchers/$app_id/bridgeplay-wine.log" "$$" \
       < /dev/null > /dev/null 2>&1 7>&- 8>&- 9>&- &
     echo "launch: progress panel started (new prefix: $prefix_was_new)" >> "$log" 2>&1 || true
   elif [ "$prefix_was_new" = 1 ]; then

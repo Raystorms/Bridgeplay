@@ -5,16 +5,22 @@ import AppKit
 // beside the launch, after any anti-cheat prompt, and writes the step it is on to
 // bridgeplay-launch-step. Nothing here can hold the launch up: the script never waits on it.
 enum LaunchProgressCommand {
+    // compat_run.sh looks for it in this binary before passing it, so it must stay over 15
+    // bytes: Swift keeps shorter strings inside the code, where the search cannot find them.
     static let flag = "--launch-progress"
     // Shared with compat_run.sh.
     static let stepName = "bridgeplay-launch-step"
 
-    // <compatdata> <1 when the prefix is new> <the launcher's Wine log>. Never returns.
+    // <compatdata> <1 when the prefix is new> <the launcher's Wine log> <the run script's pid>.
+    // Never returns.
     static func run(_ arguments: [String]) -> Never {
-        guard arguments.count == 3, arguments[0].hasPrefix("/"), arguments[2].hasPrefix("/") else { exit(1) }
+        guard arguments.count == 4, arguments[0].hasPrefix("/"), arguments[2].hasPrefix("/"),
+            let launcher = pid_t(arguments[3])
+        else { exit(1) }
         let compatdata = arguments[0]
-        // The run script started this, so a different parent means the launch has ended.
-        let launcher = getppid()
+        // The run script started this, so any other parent means the launch has ended, even
+        // one that ended before this got here.
+        guard getppid() == launcher else { exit(0) }
         MainActor.assumeIsolated {
             NSApplication.shared.setActivationPolicy(.accessory)
             let watcher = LaunchProgressWatcher(
@@ -93,8 +99,9 @@ final class LaunchProgressWatcher {
     private var panel: ProgressPanel?
     // The step on screen, nil while hidden.
     private var showing: LaunchStep??
-    // Whether each window owner is this game's. A process keeps the files it was started with.
-    private var owners: [pid_t: Bool] = [:]
+    // Whether each window owner is this game's, by pid and start time so a reused pid is
+    // looked at again. A process keeps the files it was started with.
+    private var owners: [pid_t: (started: UInt64, game: Bool)] = [:]
 
     init(compatdata: String, progress: LaunchProgress, launcher: pid_t, wineLog: String) {
         self.compatdata = compatdata
@@ -150,11 +157,25 @@ final class LaunchProgressWatcher {
                 let bounds = window[kCGWindowBounds as String] as? [String: Double],
                 (bounds["Width"] ?? 0) >= 32, (bounds["Height"] ?? 0) >= 32
             else { continue }
-            let game = owners[pid] ?? Self.holdsOpen(device: log.st_dev, inode: log.st_ino, pid: pid)
-            owners[pid] = game
+            let started = Self.startTime(of: pid)
+            let game: Bool
+            if let started, let known = owners[pid], known.started == started {
+                game = known.game
+            } else {
+                game = Self.holdsOpen(device: log.st_dev, inode: log.st_ino, pid: pid)
+                if let started { owners[pid] = (started, game) }
+            }
             if game { return true }
         }
         return false
+    }
+
+    // Microseconds since 1970 at which the process started, nil when it cannot be read.
+    nonisolated static func startTime(of pid: pid_t) -> UInt64? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec
     }
 
     nonisolated static func holdsOpen(device: dev_t, inode: ino_t, pid: pid_t) -> Bool {
