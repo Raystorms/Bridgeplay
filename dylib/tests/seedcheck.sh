@@ -163,13 +163,36 @@ mkdir -p "$template_dir/pfx/drive_c/users/steamuser/Documents/Game" \
 printf template > "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/slot.sav"
 (
   eval 'ln() {
-    case "$2" in */Documents/Game/slot.sav) printf player > "$2" ;; esac
+    for destination; do :; done
+    case "$destination" in */pfx/drive_c/users/steamuser/Documents/Game/slot.sav)
+      printf player > "$destination" ;;
+    esac
     command ln "$@"
   }'
   copy_template_into_prefix
 ) 2>/dev/null
 check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav")" = player
 check test ! -e "$WINEPREFIX/system.reg"
+
+# A folder that appears where a file or link goes is left as the player made it.
+for entry in file link; do
+  fixture
+  profile="$WINEPREFIX/drive_c/users/steamuser"
+  mkdir -p "$template_dir/pfx/drive_c/users/steamuser/Documents/Game" "$profile/Documents/Game"
+  printf template > "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/slot.sav"
+  [ "$entry" = file ] && racing="$profile/Documents/Game/slot.sav" || racing="$profile/My Documents"
+  (
+    eval 'ln() {
+      for destination; do :; done
+      [ "$destination" != "$racing" ] || mkdir "$destination"
+      command ln "$@"
+    }'
+    copy_template_into_prefix
+  ) 2>/dev/null
+  check test -d "$racing"
+  check test "$(find "$racing" | wc -l | tr -d ' ')" = 1
+  check test ! -e "$WINEPREFIX/system.reg"
+done
 
 # Nor does a folder that appears after the check end up holding the template's inside it.
 fixture

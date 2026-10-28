@@ -2063,10 +2063,16 @@ place_seed_entry() {
     unnest_seed_entry
     return 1
   elif [ -L "$1" ]; then
-    ln -s "$(readlink "$1")" "$2" && [ -L "$2" ] \
-      && [ "$(readlink "$1")" = "$(readlink "$2")" ] && rm -f "$1"
+    link=$(readlink "$1") || return 1
+    ln -sh "$link" "$2" && [ -L "$2" ] && [ "$(readlink "$2")" = "$link" ] && rm -f "$1" && return 0
+    # ln makes the link inside a folder that appeared at $2, named after the link's target.
+    nested="$2/${link##*/}"
+    [ ! -L "$nested" ] || [ "$(readlink "$nested")" != "$link" ] || rm -f "$nested"
+    return 1
   else
-    ln "$1" "$2" && [ ! -L "$2" ] && [ "$1" -ef "$2" ] && rm -f "$1"
+    ln -h "$1" "$2" && [ ! -L "$2" ] && [ "$1" -ef "$2" ] && rm -f "$1" && return 0
+    [ ! "$1" -ef "$2/${1##*/}" ] || rm -f "$2/${1##*/}"
+    return 1
   fi
 }
 
