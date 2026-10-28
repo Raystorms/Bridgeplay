@@ -37,12 +37,13 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 settings=$work/settings.py
-# Icon centres match the two slots in background.html.
+# Icon centres match the two slots in background.html. ULMO (lzma) is about a quarter smaller
+# than UDZO (zlib) for this app; it opens on macOS 10.15 and later.
 cat >"$settings" <<PYTHON
 files = [$(printf '%s' "$app" | python3 -I -c 'import json,sys; print(json.dumps(sys.stdin.read()))')]
 symlinks = {"Applications": "/Applications"}
 background = $(printf '%s' "$background" | python3 -I -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
-format = "UDZO"
+format = "ULMO"
 filesystem = "APFS"
 window_rect = ((200, 160), (660, 400))
 default_view = "icon-view"
