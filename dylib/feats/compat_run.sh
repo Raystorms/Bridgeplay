@@ -2032,6 +2032,19 @@ build_prefix_template() {
   [ -f "$template_dir/pfx/system.reg" ]
 }
 
+# Puts one staged entry at a free name in the prefix, never over something that appeared
+# there since the check: link(2) and symlink(2) refuse an existing name.
+place_seed_entry() {
+  if [ -d "$1" ] && [ ! -L "$1" ]; then
+    mv -n "$1" "$2" && [ ! -e "$1" ]
+  elif [ -L "$1" ]; then
+    ln -s "$(readlink "$1")" "$2" && [ -L "$2" ] \
+      && [ "$(readlink "$1")" = "$(readlink "$2")" ] && rm -f "$1"
+  else
+    ln "$1" "$2" && [ ! -L "$2" ] && [ "$1" -ef "$2" ] && rm -f "$1"
+  fi
+}
+
 # Moves the cloned template into the prefix, one rename per entry. It only descends into
 # folders the prefix already has (the Steam profile and dosdevices), so most of the tree
 # moves at once. "check" moves nothing and fails where "move" would. system.reg goes in
@@ -2056,7 +2069,7 @@ merge_seed_tree() (
       target="$target_dir/$name"
       if [ ! -e "$target" ] && [ ! -L "$target" ]; then
         [ -w "$target_dir" ] || return 1
-        [ "$mode" = check ] || mv "$source" "$target" || return 1
+        [ "$mode" = check ] || place_seed_entry "$source" "$target" || return 1
       elif [ -d "$source" ] && [ ! -L "$source" ]; then
         [ -d "$target" ] && [ ! -L "$target" ] || return 1
         set -- "$@" "$relative/$name"
@@ -2064,6 +2077,8 @@ merge_seed_tree() (
         case "$relative/$name" in
           /drive_c/users/steamuser/*) continue ;;
         esac
+        # Linked in by a launch killed before it removed the staged name.
+        [ ! -L "$source" ] && [ "$source" -ef "$target" ] && continue
         [ -L "$source" ] && [ -L "$target" ] \
           && [ "$(readlink "$source")" = "$(readlink "$target")" ] || return 1
       fi
@@ -2072,9 +2087,11 @@ merge_seed_tree() (
   for name in system.reg .update-timestamp; do
     source="$seed_scratch/$name"
     target="$WINEPREFIX/$name"
-    if [ -f "$source" ] && [ ! -L "$source" ]; then
+    if [ -f "$source" ] && [ ! -L "$source" ] && [ "$source" -ef "$target" ]; then
+      [ "$mode" = check ] || rm -f "$source" || return 1
+    elif [ -f "$source" ] && [ ! -L "$source" ]; then
       [ ! -e "$target" ] && [ ! -L "$target" ] && [ -w "$WINEPREFIX" ] || return 1
-      [ "$mode" = check ] || mv "$source" "$target" || return 1
+      [ "$mode" = check ] || place_seed_entry "$source" "$target" || return 1
     elif [ -e "$source" ] || [ -L "$source" ]; then
       return 1
     fi

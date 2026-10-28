@@ -108,15 +108,19 @@ check test "$(cat "$WINEPREFIX/drive_c/windows/ntdll.dll")" = dll
 check test "$(cat "$template_dir/pfx/system.reg")" = reg
 check test "$(cat "$WINEPREFIX/system.reg")" = reg
 
-# Killed after it moved $1 entries in: the launch and its merge both die on the spot.
+# Killed after it put $1 entries in, or with $2 set, between linking a file in and removing
+# its staged name: the launch and its merge both die on the spot.
 kill_seed_after() {
-  env functions="$functions" moves="$1" /bin/sh -c "
+  env functions="$functions" moves="$1" on_rm="${2:-}" /bin/sh -c "
     eval \"\$functions\"
-    mv() {
-      if [ \"\$moves\" -eq 0 ]; then kill -KILL \"\$\$\"; exec /usr/bin/true; fi
+    die() { kill -KILL \"\$\$\"; exec /usr/bin/true; }
+    count() {
+      [ \"\$moves\" -gt 0 ] || die
       moves=\$((moves - 1))
-      command mv \"\$@\"
     }
+    mv() { count; command mv \"\$@\"; }
+    ln() { count; command ln \"\$@\"; }
+    rm() { if [ -n \"\$on_rm\" ] && [ \"\$1\" = -f ]; then die; fi; command rm \"\$@\"; }
     copy_template_into_prefix
   "
 }
@@ -141,6 +145,31 @@ for moved in 0 1 2; do
   check seeded_whole
   check grep -q 'finished seeding this prefix' "$log"
 done
+
+fixture
+mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+{ kill_seed_after 99 on-rm; } 2>/dev/null || true
+check test "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*/user.reg -ef "$WINEPREFIX/user.reg"
+check test ! -e "$WINEPREFIX/system.reg"
+finish_dead_seeds
+check seeded_whole
+check grep -q 'finished seeding this prefix' "$log"
+
+# A save that appears after the check is never replaced by the template's file.
+fixture
+mkdir -p "$template_dir/pfx/drive_c/users/steamuser/Documents/Game" \
+  "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+printf template > "$template_dir/pfx/drive_c/users/steamuser/Documents/Game/slot.sav"
+(
+  eval 'ln() {
+    case "$2" in */Documents/Game/slot.sav) printf player > "$2" ;; esac
+    command ln "$@"
+  }'
+  copy_template_into_prefix
+) 2>/dev/null
+check test "$(cat "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav")" = player
+check test ! -e "$WINEPREFIX/system.reg"
 
 # A prefix rebuilt since the seed was killed is seeded again, not finished with the leftovers.
 fixture
@@ -255,21 +284,25 @@ check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' |
 
 # A library on another volume, here HFS+, gets a full copy that shares nothing with the template.
 fixture
-/usr/bin/hdiutil create -quiet -size 16m -fs HFS+ -volname np-seedcheck "$work/hfs.dmg"
 mkdir "$work/hfs"
-/usr/bin/hdiutil attach -quiet -nobrowse -mountpoint "$work/hfs" "$work/hfs.dmg"
-check test "$(stat -f %d "$work/hfs")" != "$(stat -f %d "$template_dir")"
-STEAM_COMPAT_DATA_PATH="$work/hfs/game"
-WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
-mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
-printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
-copy_template_into_prefix
-check seeded_whole
-check grep -q 'copied this prefix from the .* template, not a clone' "$log"
-check test "$(stat -f %l "$WINEPREFIX/drive_c/windows/ntdll.dll")" = 1
-printf changed > "$WINEPREFIX/drive_c/windows/ntdll.dll"
-check test "$(cat "$template_dir/pfx/drive_c/windows/ntdll.dll")" = dll
-/usr/bin/hdiutil detach -quiet -force "$work/hfs"
+if ! /usr/bin/hdiutil create -quiet -size 16m -fs HFS+ -volname np-seedcheck "$work/hfs.dmg" \
+  || ! /usr/bin/hdiutil attach -quiet -nobrowse -mountpoint "$work/hfs" "$work/hfs.dmg"; then
+  printf '  FAIL could not attach an HFS+ disk image, the other-volume seed did not run\n'
+  fails=$((fails + 1))
+else
+  check test "$(stat -f %d "$work/hfs")" != "$(stat -f %d "$template_dir")"
+  STEAM_COMPAT_DATA_PATH="$work/hfs/game"
+  WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
+  mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+  printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+  copy_template_into_prefix
+  check seeded_whole
+  check grep -q 'copied this prefix from the .* template, not a clone' "$log"
+  check test "$(stat -f %l "$WINEPREFIX/drive_c/windows/ntdll.dll")" = 1
+  printf changed > "$WINEPREFIX/drive_c/windows/ntdll.dll"
+  check test "$(cat "$template_dir/pfx/drive_c/windows/ntdll.dll")" = dll
+  /usr/bin/hdiutil detach -quiet -force "$work/hfs"
+fi
 rmdir "$work/hfs"
 
 # A conflict anywhere moves nothing in.
