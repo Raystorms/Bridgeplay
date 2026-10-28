@@ -720,7 +720,7 @@ final class SystemStatus {
     private(set) var signingIdentityReady: Bool?
 
     func refreshSigningIdentity() async {
-        signingIdentityReady = await Task.detached(priority: .utility) { LocalSigning.existingHash() != nil }.value
+        signingIdentityReady = await Task.detached(priority: .utility) { LocalSigning.existing() != nil }.value
     }
 
     func trustThisMac() async {

@@ -72,6 +72,8 @@ enum Uninstall {
         var defaultToolBackup: URL
         var files: [URL]
         var steamRunning: @Sendable () -> Bool
+        // The password of Bridgeplay's signing keychain, kept in the login keychain.
+        var forgetSigning: @Sendable () -> Void = {}
 
         static var live: Leftovers {
             Leftovers(
@@ -80,7 +82,8 @@ enum Uninstall {
                 steamConfig: SteamDefaultTool.config,
                 defaultToolBackup: SteamDefaultTool.backup,
                 files: [SupportPaths.homeDir],
-                steamRunning: { SteamBundle.isRunningForThisUser })
+                steamRunning: { SteamBundle.isRunningForThisUser },
+                forgetSigning: { LocalSigning.forgetPrivateKeychain() })
         }
     }
 
@@ -185,6 +188,7 @@ enum Uninstall {
         var removed = try remove(
             legacyCompat: legacyCompat, compatTools: compatTools, directories: directories + leftovers.files
         )
+        leftovers.forgetSigning()
         // The record of modified bundles is kept while one is out of reach, so a later
         // removal still finds it.
         if missing.isEmpty, try modifications.paths().isEmpty {

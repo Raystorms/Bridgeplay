@@ -337,15 +337,14 @@ struct SetupAssistantView: View {
         .padding(.horizontal, 2)
     }
 
-    // Told before Set Up is pressed, so the macOS dialogs that follow are expected. Signing
-    // Steam with the step 3 certificate can make macOS ask for the login password, once per
-    // signed file (the add-on, Steam's executable, Steam.app), until the user picks Always
-    // Allow: that adds codesign to the key's partition list, which only the login password
-    // can change. App Management can ask too.
+    // Told before Set Up is pressed, so the macOS dialogs that follow are expected. An older
+    // install's certificate in the login keychain makes macOS ask for the login password, once
+    // per signed file, until the user picks Always Allow; one in Bridgeplay's own keychain
+    // never asks (LocalSigning). App Management can ask too.
     @ViewBuilder
     private var approvals: some View {
         SetupCard {
-            if model.trust == .done {
+            if model.trust == .done, model.trustInLoginKeychain {
                 WizardRow(row: StatusRow(title: String(localized: "Confirm the Steam update"),
                           value: String(localized: "macOS asks for your Mac password once, so Steam keeps working with Bridgeplay. Type it and choose Always Allow, and it won't ask again."),
                           tone: .info))

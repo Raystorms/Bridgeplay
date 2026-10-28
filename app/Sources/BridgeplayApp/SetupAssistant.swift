@@ -57,6 +57,8 @@ final class SetupAssistant {
     // The keychain identity that keeps Steam's controller permission across updates.
     enum TrustState: Equatable { case unknown, needed, working, done, declined(String) }
     var trust: TrustState = .unknown
+    // An older install's identity in the login keychain, which macOS asks about when Steam is signed.
+    var trustInLoginKeychain = false
 
     // Finish
     var tasks: [SetupTask] = SetupAssistant.plannedTasks
@@ -247,8 +249,9 @@ final class SetupAssistant {
 
     func checkTrust() async {
         guard trust == .unknown else { return }
-        let present = await Task.detached(priority: .utility) { LocalSigning.existingHash() != nil }.value
-        if trust == .unknown { trust = present ? .done : .needed }
+        let identity = await Task.detached(priority: .utility) { LocalSigning.existing() }.value
+        trustInLoginKeychain = identity != nil && identity?.keychain == nil
+        if trust == .unknown { trust = identity != nil ? .done : .needed }
     }
 
     // One click, no password: see LocalSigning for why no prompt is needed. A failure keeps
@@ -259,6 +262,7 @@ final class SetupAssistant {
         if isPreview { await pretend(); trust = .done; return }
         do {
             _ = try await Task.detached(priority: .userInitiated) { try LocalSigning.ensure() }.value
+            trustInLoginKeychain = await Task.detached(priority: .utility) { LocalSigning.existing()?.keychain == nil }.value
             trust = .done
         } catch {
             AppLog.note("setup: signing identity not created: \(error.localizedDescription)")
