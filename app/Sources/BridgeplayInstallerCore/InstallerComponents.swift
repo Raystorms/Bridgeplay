@@ -16,6 +16,8 @@ public struct InstallerComponents: Sendable, Equatable {
     static let maximumLength: Int64 = 2_147_483_648
 
     public let length: Int64
+    /// Where the archive comes from, for "Downloading from …".
+    public var archiveHost: String { archiveURL.host() ?? "github.com" }
     public let signature: Data
     let verificationKey: Data
     var archiveURL = Self.archiveURL
@@ -130,6 +132,7 @@ public struct InstallerComponents: Sendable, Equatable {
         guard FileManager.default.isReadableFile(atPath: script.path) else {
             throw InstallerError.invalidInstallation("The components download has no Install.command.")
         }
+        try verifyAppleSigned(gptk: unpacked.appending(path: "Bridgeplay/gptk"))
         var environment = ProcessInfo.processInfo.environment
         environment["BRIDGEPLAY_INSTALL_APP"] = "0"
         environment["BRIDGEPLAY_NONINTERACTIVE"] = "1"
@@ -137,6 +140,40 @@ public struct InstallerComponents: Sendable, Equatable {
             if line.hasPrefix("==> ") { status(String(line.dropFirst(4))) }
             else if let meter = InstallerDownloadProgress(curlMeter: line) { download(meter) }
         }
+    }
+
+    /// GPTK ships unmodified: D3DMetal.framework and every other Mach-O file must carry Apple's
+    /// own signature, the check scripts/package-installer.sh makes before packaging.
+    static func verifyAppleSigned(gptk: URL, check: (URL) -> Bool = { appleSigned($0) }) throws {
+        let fail = { (path: String) in InstallerError.componentsFailure("\(path) is not signed by Apple.") }
+        let framework = gptk.appending(path: "external/D3DMetal.framework")
+        guard check(framework) else { throw fail("D3DMetal.framework") }
+        var machO = 0
+        let files = FileManager.default.enumerator(at: gptk, includingPropertiesForKeys: [.isRegularFileKey])
+        while let file = files?.nextObject() as? URL {
+            if file.lastPathComponent == framework.lastPathComponent {
+                files?.skipDescendants()
+                continue
+            }
+            guard (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                  isMachO(file) else { continue }
+            guard check(file) else { throw fail(file.lastPathComponent) }
+            machO += 1
+        }
+        guard machO > 0 else { throw InstallerError.componentsFailure("The Game Porting Toolkit in the download is incomplete.") }
+    }
+
+    static func appleSigned(_ url: URL) -> Bool {
+        (try? run("/usr/bin/codesign", ["--verify", "--strict", "--deep", "-R=anchor apple", url.path])) != nil
+    }
+
+    static func isMachO(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 4), head.count == 4 else { return false }
+        // Mach-O in either byte order, and universal binaries.
+        return [[0xCF, 0xFA, 0xED, 0xFE], [0xFE, 0xED, 0xFA, 0xCF], [0xCE, 0xFA, 0xED, 0xFE], [0xFE, 0xED, 0xFA, 0xCE],
+                [0xCA, 0xFE, 0xBA, 0xBE]].contains(Array(head))
     }
 
     @discardableResult

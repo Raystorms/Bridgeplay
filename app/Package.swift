@@ -22,7 +22,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "BridgeplayApp",
-            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "BridgeplayUI"],
+            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "BridgeplayUI", "BridgeplayInstallerCore"],
             path: "Sources/BridgeplayApp",
             resources: (hasPayload ? [.copy("Resources/payload")] : []) + [
                 .process("Resources/Localization"),

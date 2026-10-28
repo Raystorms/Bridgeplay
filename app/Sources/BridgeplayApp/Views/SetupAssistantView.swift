@@ -189,14 +189,22 @@ struct SetupAssistantView: View {
     @ViewBuilder
     private var graphicsStep: some View {
         StepHeader(step: model.step, title: "Add Apple's game graphics",
-                   detail: "Apple's Game Porting Toolkit (D3DMetal) runs DirectX 11 and 12 games on Metal. The installer includes it under Apple's non-commercial license, or link your own copy from Apple.")
+                   detail: "Apple's Game Porting Toolkit (D3DMetal) runs DirectX 11 and 12 games on Metal. Bridgeplay can download it for you under Apple's non-commercial license, or add your own copy from Apple.")
         SetupCard {
             if let gptk = model.gptk {
                 WizardRow(row: StatusRow(title: String(localized: "Game Porting Toolkit"),
                           value: String(localized: "Ready from \(gptk.libRoot.path(percentEncoded: false))."),
                           tone: .ok, trailing: gptk.version))
             } else {
-                WizardRow(row: StatusRow(title: String(localized: "Download it from Apple"),
+                // Apple's files unmodified, from Bridgeplay's installer release; Steam comes along when it's missing.
+                WizardRow(row: StatusRow(title: String(localized: "Download with Bridgeplay"),
+                          value: DownloadMeter.shared.title ?? model.gptkProgress
+                            ?? String(localized: "About 500 MB. Also installs Steam if this Mac doesn't have it yet."),
+                          action: StatusAction(label: String(localized: "Download"), isProminent: true, isEnabled: !model.isWorking) {
+                              Task { await model.downloadGPTK() }
+                          }), symbol: "arrow.down.circle")
+                SetupHairline()
+                WizardRow(row: StatusRow(title: String(localized: "Or download it from Apple"),
                           value: String(localized: "Sign in, then download the latest Game Porting Toolkit .dmg."),
                           action: StatusAction(label: String(localized: "Open Apple Downloads")) {
                               NSWorkspace.shared.open(URL(string: "https://developer.apple.com/download/all/?q=Game%20Porting%20Toolkit")!)
@@ -205,13 +213,13 @@ struct SetupAssistantView: View {
                 if let image = model.gptkImages.first {
                     WizardRow(row: StatusRow(title: String(localized: "Use the one in Downloads"),
                               value: image.lastPathComponent,
-                              action: StatusAction(label: String(localized: "Use This"), isProminent: true, isEnabled: !model.isWorking) {
+                              action: StatusAction(label: String(localized: "Use This"), isEnabled: !model.isWorking) {
                                   Task { await model.importGPTK(image) }
                               }), number: 2)
                 } else {
                     WizardRow(row: StatusRow(title: String(localized: "Add the disk image"),
                               value: String(localized: "Drag the .dmg onto this window, or choose it."),
-                              action: StatusAction(label: String(localized: "Choose…"), isProminent: true, isEnabled: !model.isWorking) { chooseImage() }),
+                              action: StatusAction(label: String(localized: "Choose…"), isEnabled: !model.isWorking) { chooseImage() }),
                               number: 2)
                 }
             }

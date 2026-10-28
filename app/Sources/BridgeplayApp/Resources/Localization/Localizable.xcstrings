@@ -1196,6 +1196,22 @@
         }
       }
     },
+    "About 500 MB. Also installs Steam if this Mac doesn't have it yet." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Circa 500 MB. Installa anche Steam se questo Mac non lo ha ancora."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "约 500 MB。如果这台 Mac 还没有 Steam，也会一并安装。"
+          }
+        }
+      }
+    },
     "About Bridgeplay" : {
       "localizations" : {
         "it" : {
@@ -1628,18 +1644,18 @@
         }
       }
     },
-    "Apple's Game Porting Toolkit (D3DMetal) runs DirectX 11 and 12 games on Metal. The installer includes it under Apple's non-commercial license, or link your own copy from Apple." : {
+    "Apple's Game Porting Toolkit (D3DMetal) runs DirectX 11 and 12 games on Metal. Bridgeplay can download it for you under Apple's non-commercial license, or add your own copy from Apple." : {
       "localizations" : {
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Il Game Porting Toolkit di Apple (D3DMetal) esegue i giochi DirectX 11 e 12 su Metal. L'installer lo include con la licenza non commerciale di Apple, oppure collega una tua copia da Apple."
+            "value" : "Il Game Porting Toolkit di Apple (D3DMetal) esegue i giochi DirectX 11 e 12 su Metal. Bridgeplay può scaricarlo per te con la licenza non commerciale di Apple, oppure aggiungi una tua copia da Apple."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Apple 的 Game Porting Toolkit（D3DMetal）可通过 Metal 运行 DirectX 11 和 12 游戏。安装器按 Apple 的非商业许可附带它，你也可以链接自己从 Apple 下载的副本。"
+            "value" : "Apple 的 Game Porting Toolkit（D3DMetal）可通过 Metal 运行 DirectX 11 和 12 游戏。Bridgeplay 可以按 Apple 的非商业许可为你下载它，你也可以添加自己从 Apple 下载的副本。"
           }
         }
       }
@@ -4258,18 +4274,18 @@
         }
       }
     },
-    "Download it from Apple" : {
+    "Download" : {
       "localizations" : {
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Scaricalo da Apple"
+            "value" : "Scarica"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从 Apple 下载"
+            "value" : "下载"
           }
         }
       }
@@ -4286,6 +4302,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下载缺失的 Valve 组件。"
+          }
+        }
+      }
+    },
+    "Download with Bridgeplay" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scarica con Bridgeplay"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过 Bridgeplay 下载"
           }
         }
       }
@@ -5650,6 +5682,22 @@
         }
       }
     },
+    "Installing the Game Porting Toolkit" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installazione del Game Porting Toolkit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在安装 Game Porting Toolkit"
+          }
+        }
+      }
+    },
     "It will replace the DLLs used by CrossOver with ones that match your compatibility tool." : {
       "localizations" : {
         "it" : {
@@ -6910,6 +6958,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可选。若跳过，游戏将使用 DXMT，它只能运行 DirectX 10 和 11 游戏。你之后可以在“状态”中添加该工具包。"
+          }
+        }
+      }
+    },
+    "Or download it from Apple" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppure scaricalo da Apple"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "或从 Apple 下载"
           }
         }
       }
@@ -10273,6 +10337,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ ntdll 的可选头为 %@，预期为 %@。"
+          }
+        }
+      }
+    },
+    "The Game Porting Toolkit wasn't added. %@" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il Game Porting Toolkit non è stato aggiunto. %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未能添加 Game Porting Toolkit。%@"
           }
         }
       }

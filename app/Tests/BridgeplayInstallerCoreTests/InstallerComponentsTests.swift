@@ -66,4 +66,31 @@ struct InstallerComponentsTests {
         let output = try InstallerComponents.run("/bin/sh", ["-c", "printf '==> one\\n==> two\\n'"])
         #expect(output == "==> one\n==> two\n")
     }
+
+    @Test("GPTK passes only when D3DMetal.framework and every other Mach-O file are Apple-signed")
+    func appleSignedGPTK() throws {
+        let gptk = try scratch()
+        defer { try? FileManager.default.removeItem(at: gptk) }
+        let framework = gptk.appending(path: "external/D3DMetal.framework")
+        try FileManager.default.createDirectory(at: framework.appending(path: "Versions/A"), withIntermediateDirectories: true)
+        try Data([0xCF, 0xFA, 0xED, 0xFE, 0]).write(to: framework.appending(path: "Versions/A/D3DMetal"))
+        try FileManager.default.createDirectory(at: gptk.appending(path: "wine/x86_64-windows"), withIntermediateDirectories: true)
+        try Data("MZ".utf8).write(to: gptk.appending(path: "wine/x86_64-windows/d3d11.dll"))
+        // Only the framework so far: no other Mach-O file means libd3dshared.dylib is missing.
+        #expect(throws: InstallerError.self) { try InstallerComponents.verifyAppleSigned(gptk: gptk) { _ in true } }
+
+        let shared = gptk.appending(path: "external/libd3dshared.dylib")
+        try Data([0xCA, 0xFE, 0xBA, 0xBE, 0]).write(to: shared)
+        var checked: [String] = []
+        try InstallerComponents.verifyAppleSigned(gptk: gptk) { checked.append($0.lastPathComponent); return true }
+        // The framework as one bundle, then the dylib; the PE file and the framework's insides are skipped.
+        #expect(checked == ["D3DMetal.framework", "libd3dshared.dylib"])
+
+        #expect(throws: InstallerError.self) {
+            try InstallerComponents.verifyAppleSigned(gptk: gptk) { $0.lastPathComponent != "libd3dshared.dylib" }
+        }
+        #expect(throws: InstallerError.self) {
+            try InstallerComponents.verifyAppleSigned(gptk: gptk) { $0.lastPathComponent != "D3DMetal.framework" }
+        }
+    }
 }

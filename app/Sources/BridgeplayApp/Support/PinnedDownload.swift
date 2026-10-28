@@ -185,6 +185,8 @@ final class DownloadMeter {
     private(set) var remaining: TimeInterval?
     private(set) var paused = false
     @ObservationIgnored fileprivate weak var relay: ProgressRelay?
+    // Pauses a download that has no ProgressRelay (the installer components' own session).
+    @ObservationIgnored var pauseControl: ((Bool) -> Void)?
 
     var fraction: Double? { host != nil && total > 0 ? Double(received) / Double(total) : nil }
     // "Downloading from github.com", for the row above the bar.
@@ -202,12 +204,13 @@ final class DownloadMeter {
         host = nil
         paused = false
         relay = nil
+        pauseControl = nil
     }
 
     func togglePause() {
         guard host != nil else { return }
         paused.toggle()
-        paused ? relay?.suspend() : relay?.resume()
+        if let pauseControl { pauseControl(paused) } else { paused ? relay?.suspend() : relay?.resume() }
         AppLog.note("download \(paused ? "paused" : "resumed") at \(received) of \(total) bytes")
     }
 }

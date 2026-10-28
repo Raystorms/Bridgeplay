@@ -53,6 +53,11 @@ Prefixes, saves and Steam libraries are never touched. The components step write
 Opening the installed app continues its Setup Assistant, which downloads the WineCX engine
 and sets up Steam. Neither installer changes Sparkle's update feed.
 
+Bridgeplay.app does not need either installer. Its Setup Assistant's Graphics step offers
+Download, which fetches the same `Bridgeplay-Installer.zip` through `BridgeplayInstallerCore`
+(EdDSA check, then Apple's signature on every Mach-O file in `gptk/`) and runs its
+`Install.command` without the app step, so a Mac with only the app gets the same files.
+
 On Finish, users may open Bridgeplay. When the installer was started from a mounted disk
 image that `hdiutil` identifies exactly, it also offers to eject the image and move it to
 Trash; a helper outside the volume does that after the installer exits. Failures keep the
