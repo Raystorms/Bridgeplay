@@ -194,6 +194,23 @@ for entry in file link; do
   check test ! -e "$WINEPREFIX/system.reg"
 done
 
+# A link the player already had in that folder stays.
+fixture
+profile="$WINEPREFIX/drive_c/users/steamuser"
+mkdir -p "$profile/Documents/Game"
+(
+  eval 'ln() {
+    for destination; do :; done
+    if [ "$destination" = "$profile/My Documents" ]; then
+      mkdir "$destination" && command ln -s ./Documents "$destination/Documents"
+    fi
+    command ln "$@"
+  }'
+  copy_template_into_prefix
+) 2>/dev/null
+check test "$(readlink "$profile/My Documents/Documents")" = ./Documents
+check test ! -e "$WINEPREFIX/system.reg"
+
 # Nor does a folder that appears after the check end up holding the template's inside it.
 fixture
 mkdir -p "$template_dir/pfx/drive_c/users/steamuser/Documents/Game" \

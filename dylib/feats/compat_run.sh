@@ -2064,13 +2064,21 @@ place_seed_entry() {
     return 1
   elif [ -L "$1" ]; then
     link=$(readlink "$1") || return 1
-    ln -sh "$link" "$2" && [ -L "$2" ] && [ "$(readlink "$2")" = "$link" ] && rm -f "$1" && return 0
-    # ln makes the link inside a folder that appeared at $2, named after the link's target.
+    ln -sh "$link" "$2" || return 1
+    if [ -L "$2" ] && [ "$(readlink "$2")" = "$link" ]; then
+      rm -f "$1"
+      return
+    fi
+    # ln made it inside a folder that appeared at $2, named after the link's target.
     nested="$2/${link##*/}"
     [ ! -L "$nested" ] || [ "$(readlink "$nested")" != "$link" ] || rm -f "$nested"
     return 1
   else
-    ln -h "$1" "$2" && [ ! -L "$2" ] && [ "$1" -ef "$2" ] && rm -f "$1" && return 0
+    ln -h "$1" "$2" || return 1
+    if [ ! -L "$2" ] && [ "$1" -ef "$2" ]; then
+      rm -f "$1"
+      return
+    fi
     [ ! "$1" -ef "$2/${1##*/}" ] || rm -f "$2/${1##*/}"
     return 1
   fi
