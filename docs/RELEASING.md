@@ -1,12 +1,14 @@
 # Releasing Bridgeplay
 
-Every release is a GitHub release of `raymondchins/Bridgeplay` carrying `Bridgeplay.zip`,
-`appcast.xml` and the small native installer, `Bridgeplay-Setup.zip` (notarized, so macOS
-only asks once whether to open it). The native installer also downloads the `installer`
+Every release is a GitHub release of `raymondchins/Bridgeplay` carrying `Bridgeplay.zip`
+(the Sparkle update), `appcast.xml`, `Bridgeplay.dmg` (the download bridgeplay.dev links to:
+the app in a disk image with an Applications link, built by `scripts/package-dmg.sh` after
+the appcast so Sparkle never indexes it) and the small native installer,
+`Bridgeplay-Setup.zip`. All three are notarized, so macOS only asks once whether to open
+them. The native installer also downloads the `installer`
 release's `Bridgeplay-Installer.zip` for GPTK, the engine and the configs, checked against
 the `Bridgeplay-Installer.zip.sig` that `release-local.sh` signs and uploads beside it. The one-click `Bridgeplay-Installer.zip` lives on its own prerelease, tag
-`installer` (bridgeplay.dev/download redirects to
-`releases/download/installer/Bridgeplay-Installer.zip`). It carries no app: `Install.command`
+`installer`. It carries no app: `Install.command`
 downloads the Latest release's `Bridgeplay.zip` when it runs, so `release-local.sh` uploads
 the installer again only when its fingerprint (every file it ships) changes, which is when
 the engines, GPTK, the configs or the installer itself change. A release whose sources

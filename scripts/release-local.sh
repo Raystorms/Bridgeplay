@@ -276,13 +276,20 @@ else
     scripts/package-native-installer.sh
 fi
 cp out/Bridgeplay-Setup.zip "$out/bridgeplay/Bridgeplay-Setup.zip"
+# The download bridgeplay.dev links to: the app in a disk image people drag to Applications.
+# Notarized and stapled on its own; a dry run builds it unsigned.
+if [ "$dry_run" -eq 1 ]; then
+	BRIDGEPLAY_SIGN_IDENTITY=- scripts/package-dmg.sh "$app" "$out/bridgeplay/Bridgeplay.dmg"
+else
+	scripts/package-dmg.sh "$app" "$out/bridgeplay/Bridgeplay.dmg"
+fi
 
 title="Bridgeplay $version"
 body=$(printf '%s\n\nBuild %s, based on NotProton %s.\n' "$notes" "$build" "$upstream")
 echo "==> $title (build $build), notes since ${previous:-the beginning}:"
 printf '%s\n' "$notes" | sed 's/^/    /'
 run gh release create "$tag" "$out/bridgeplay/Bridgeplay.zip" "$out/bridgeplay/appcast.xml" \
-    "$out/bridgeplay/Bridgeplay-Setup.zip" \
+    "$out/bridgeplay/Bridgeplay-Setup.zip" "$out/bridgeplay/Bridgeplay.dmg" \
 	-R "$slug" --target "$(git rev-parse HEAD)" --title "$title" --notes "$body" --latest
 if [ "$legacy" -eq 1 ]; then
 	# Only a carrier for the feed: the tag goes on that repository's default branch, since
