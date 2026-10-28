@@ -2,6 +2,7 @@
 # launchprogresscheck: the panel between Play and the game's first window (launch_progress and
 # launch_step in compat_run.sh). It starts beside the launch without holding it up or taking
 # the prefix locks, only for a game launch, and only after the kernel anti-cheat prompt.
+# shellcheck disable=SC2016 # the sh -ec programs expand their own variables
 set -e
 SRC="${1:-$(dirname "$0")/../feats/compat_run.sh}"
 [ -f "$SRC" ] || { echo "launchprogresscheck: $SRC not present, skipped"; exit 0; }
