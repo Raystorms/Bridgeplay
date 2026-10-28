@@ -34,7 +34,7 @@ struct SetupAssistantView: View {
         HStack(spacing: 0) {
             SetupArt(step: model.step, progress: finishedFraction, running: model.step == .finish && model.isWorking)
                 .overlay(alignment: .topLeading) {
-                    HStack(spacing: 9) {
+                    HStack(spacing: 4.4) {
                         BridgeplayMark(size: 22)
                         Text(verbatim: "Bridgeplay")
                             .font(BP.display(13))

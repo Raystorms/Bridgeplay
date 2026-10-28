@@ -79,7 +79,7 @@ struct InstallerView: View {
 
     private var rail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
+            HStack(spacing: 4.4) {
                 BridgeplayMark(size: 22)
                 Text(verbatim: "Bridgeplay").font(BP.display(13)).foregroundStyle(BP.iridescent)
             }

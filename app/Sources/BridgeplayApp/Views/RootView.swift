@@ -50,7 +50,7 @@ struct RootView: View {
             .scrollContentBackground(.hidden)
             .background(BP.bg)
             .safeAreaInset(edge: .top, spacing: 0) {
-                HStack(spacing: 9) {
+                HStack(spacing: 4.4) {
                     BridgeplayMark(size: 22)
                     Text(verbatim: "Bridgeplay")
                         .font(BP.display(13))
