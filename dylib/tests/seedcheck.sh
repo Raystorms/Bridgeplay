@@ -124,7 +124,11 @@ kill_seed_after() {
       moves=\$((moves - 1))
     }
     mv() { count; command mv \"\$@\"; }
-    ln() { count; command ln \"\$@\"; }
+    ln() {
+      for destination; do :; done
+      case \"\$destination\" in */.notproton-seed-link) ;; *) count ;; esac
+      command ln \"\$@\"
+    }
     rm() { if [ -n \"\$on_rm\" ] && [ \"\$1\" = -f ]; then die; fi; command rm \"\$@\"; }
     copy_template_into_prefix
   "
@@ -451,6 +455,19 @@ else
   copy_template_into_prefix
   check grep -q 'this volume has no hard links' "$log"
   check test -z "$(ls -A "$WINEPREFIX")"
+  # Killed right after it recorded the prefix: the next launch has nothing to finish there.
+  : > "$log"
+  { env functions="$functions" /bin/sh -c "
+    eval \"\$functions\"
+    stat() {
+      command stat \"\$@\"
+      [ \"\$2:\$3\" != \"%i:\$WINEPREFIX\" ] || { kill -KILL \"\$\$\"; exec /usr/bin/true; }
+    }
+    copy_template_into_prefix
+  "; } 2>/dev/null || true
+  finish_dead_seeds
+  check test -z "$(ls -A "$WINEPREFIX")"
+  check test "$(grep -c 'finished seeding this prefix' "$log" || true)" = 0
   check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
   /usr/bin/hdiutil detach -quiet -force "$work/mnt.exfat"
 fi

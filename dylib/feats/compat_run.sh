@@ -2154,25 +2154,25 @@ copy_template_into_prefix() {
     how="copied this prefix from the $runner_id template, not a clone"
     cp -R "$template_dir/pfx/." "$seed_scratch" 2>/dev/null && copied=0 || copied=$?
   fi
-  # The target lets a later launch finish a merge this one could not, into this prefix only.
-  # It is the inode alone: an external drive can come back with another device number.
-  if [ "$copied" -eq 0 ] && prefix_is_bare \
+  # Files go in as hard links. Without them (exFAT, some network shares), back off before
+  # anything moves or is recorded for a later launch to finish; staging is on the prefix's
+  # volume. The target lets a later launch finish a merge this one could not, into this
+  # prefix only. It is the inode alone: an external drive can come back with another
+  # device number.
+  if [ "$copied" -eq 0 ] \
+    && ! ln "$seed_scratch/system.reg" "$seed_scratch/.notproton-seed-link" 2>/dev/null; then
+    echo "=== this volume has no hard links, wine builds this prefix itself ===" >> "$log" 2>&1 || true
+  elif [ "$copied" -eq 0 ] && prefix_is_bare \
     && stat -f %i "$WINEPREFIX" > "$seed_scratch/.notproton-seed-target" 2>/dev/null \
     && merge_seed_tree check; then
-    # Files go in as hard links. Without them (exFAT, some network shares), back off before
-    # anything moves; staging is on the prefix's volume.
-    if ! ln "$seed_scratch/.notproton-seed-target" "$seed_scratch/.notproton-seed-link" 2>/dev/null; then
-      echo "=== this volume has no hard links, wine builds this prefix itself ===" >> "$log" 2>&1 || true
+    seed_merging=1
+    if merge_seed_tree move; then
+      echo "=== $how ===" >> "$log" 2>&1 || true
     else
-      seed_merging=1
-      if merge_seed_tree move; then
-        echo "=== $how ===" >> "$log" 2>&1 || true
-      else
-        echo "=== could not finish seeding from the template, wine completes this prefix ===" \
-          >> "$log" 2>&1 || true
-      fi
-      seed_merging=0
+      echo "=== could not finish seeding from the template, wine completes this prefix ===" \
+        >> "$log" 2>&1 || true
     fi
+    seed_merging=0
   else
     echo "=== could not seed from the template, wine builds this prefix itself ===" \
       >> "$log" 2>&1 || true
