@@ -2104,7 +2104,7 @@ merge_seed_tree() (
       name=${source##*/}
       if [ -z "$relative" ]; then
         case "$name" in
-          system.reg|.update-timestamp|.notproton-seed-target|.notproton-seed-placing) continue ;;
+          system.reg|.update-timestamp|.notproton-seed-*) continue ;;
         esac
       fi
       target="$target_dir/$name"
@@ -2155,8 +2155,9 @@ copy_template_into_prefix() {
     cp -R "$template_dir/pfx/." "$seed_scratch" 2>/dev/null && copied=0 || copied=$?
   fi
   # The target lets a later launch finish a merge this one could not, into this prefix only.
+  # It is the inode alone: an external drive can come back with another device number.
   if [ "$copied" -eq 0 ] && prefix_is_bare \
-    && stat -f '%d:%i' "$WINEPREFIX" > "$seed_scratch/.notproton-seed-target" 2>/dev/null \
+    && stat -f %i "$WINEPREFIX" > "$seed_scratch/.notproton-seed-target" 2>/dev/null \
     && merge_seed_tree check; then
     seed_merging=1
     if merge_seed_tree move; then
@@ -2176,25 +2177,38 @@ copy_template_into_prefix() {
 
 # A launch killed while it moved the template in left the rest in its staging folder.
 finish_dead_seeds() {
+  dropping=""
   for leftover in "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*; do
     [ -d "$leftover" ] && [ ! -L "$leftover" ] || continue
     case "${leftover##*.}" in ''|0|*[!0-9]*) continue ;; esac
     [ "$(stat -f %u "$leftover" 2>/dev/null)" = "$(id -u)" ] || continue
     kill -0 "${leftover##*.}" 2>/dev/null && continue
-    [ -f "$leftover/.notproton-seed-target" ] || continue
-    [ "$(cat "$leftover/.notproton-seed-target" 2>/dev/null)" \
-      = "$(stat -f '%d:%i' "$WINEPREFIX" 2>/dev/null)" ] || continue
-    seed_scratch=$leftover
-    if unnest_seed_entry && merge_seed_tree check && merge_seed_tree move; then
-      echo "=== finished seeding this prefix, which an earlier launch left half done ===" \
-        >> "$log" 2>&1 || true
+    if [ ! -f "$leftover/.notproton-seed-target" ]; then
+      why="it stopped before it moved anything in"
+    elif [ "$(cat "$leftover/.notproton-seed-target" 2>/dev/null)" \
+      != "$(stat -f %i "$WINEPREFIX" 2>/dev/null)" ]; then
+      why="it was for a prefix that has been replaced since"
+    elif ! same_volume "$leftover" "$WINEPREFIX"; then
+      why="it is not on the prefix's volume"
     else
-      echo "=== could not finish an earlier launch's seed, wine completes this prefix ===" \
-        >> "$log" 2>&1 || true
+      seed_scratch=$leftover
+      if unnest_seed_entry && merge_seed_tree check && merge_seed_tree move; then
+        echo "=== finished seeding this prefix, which an earlier launch left half done ===" \
+          >> "$log" 2>&1 || true
+        why=""
+      else
+        why="it could not be finished, wine completes this prefix"
+      fi
+      seed_scratch=""
     fi
-    seed_scratch=""
+    [ -z "$why" ] || dropping="$dropping${leftover##*/}|$why
+"
   done
   sweep_dead_seeds "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*
+  printf '%s' "$dropping" | while IFS='|' read -r name why; do
+    [ ! -e "$STEAM_COMPAT_DATA_PATH/$name" ] || continue
+    echo "=== dropped $name, an earlier launch's unfinished seed: $why ===" >> "$log" 2>&1 || true
+  done
 }
 
 prefix_is_bare() (

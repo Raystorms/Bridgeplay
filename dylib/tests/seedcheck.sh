@@ -3,7 +3,12 @@ set -eu
 SRC="${1:-$(dirname "$0")/../feats/compat_run.sh}"
 work=$(mktemp -d "${TMPDIR:-/tmp}/np-seedcheck.XXXXXX")
 test "$(stat -f %d "$work")" = "$(stat -f %d "${TMPDIR:-/tmp}")"
-trap '[ ! -d "$work/hfs" ] || /usr/bin/hdiutil detach -quiet -force "$work/hfs"; chmod -R u+rwX "$work"; rm -rf "$work"' EXIT
+detach_images() {
+  for mounted in "$work"/mnt.*; do
+    [ ! -d "$mounted" ] || /usr/bin/hdiutil detach -quiet -force "$mounted" 2>/dev/null || true
+  done
+}
+trap 'detach_images; chmod -R u+rwX "$work"; rm -rf "$work"' EXIT
 cut_block() {
   from="$1" to="$2" keep="$3" awk '
     BEGIN { from = ENVIRON["from"]; to = ENVIRON["to"]; keep = ENVIRON["keep"] }
@@ -274,6 +279,7 @@ copy_template_into_prefix
 check seeded_whole
 check test ! -e "$case_root/old-pfx/system.reg"
 check test "$(grep -c 'finished seeding this prefix' "$log" || true)" = 0
+check grep -q 'dropped pfx.seeding.[0-9]*, an earlier launch.s unfinished seed: it was for a prefix that has been replaced since' "$log"
 
 # Killed while cloning, before the merge: the prefix was never touched.
 fixture
@@ -285,6 +291,7 @@ wait "$dead"
 mkdir "$STEAM_COMPAT_DATA_PATH/pfx.seeding.$dead"
 printf partial > "$STEAM_COMPAT_DATA_PATH/pfx.seeding.$dead/system.reg"
 finish_dead_seeds
+check grep -q "dropped pfx.seeding.$dead, an earlier launch's unfinished seed: it stopped before it moved anything in" "$log"
 check prefix_is_bare
 copy_template_into_prefix
 check seeded_whole
@@ -371,16 +378,25 @@ check test ! -e "$WINEPREFIX/system.reg"
 check test ! -e "$WINEPREFIX/drive_c/windows"
 check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
 
+# Attaches a fresh disk image of file system $1 at $work/mnt.$2.
+attach_image() {
+  [ -f "$work/$2.dmg" ] \
+    || /usr/bin/hdiutil create -quiet -size 32m -fs "$1" -volname "np-$2" "$work/$2.dmg" || return 1
+  mkdir -p "$work/mnt.$2"
+  /usr/bin/hdiutil attach -quiet -nobrowse -mountpoint "$work/mnt.$2" "$work/$2.dmg"
+}
+no_image() {
+  printf '  FAIL could not attach a %s disk image, %s did not run\n' "$1" "$2"
+  fails=$((fails + 1))
+}
+
 # A library on another volume, here HFS+, gets a full copy that shares nothing with the template.
 fixture
-mkdir "$work/hfs"
-if ! /usr/bin/hdiutil create -quiet -size 16m -fs HFS+ -volname np-seedcheck "$work/hfs.dmg" \
-  || ! /usr/bin/hdiutil attach -quiet -nobrowse -mountpoint "$work/hfs" "$work/hfs.dmg"; then
-  printf '  FAIL could not attach an HFS+ disk image, the other-volume seed did not run\n'
-  fails=$((fails + 1))
+if ! attach_image HFS+ hfs; then
+  no_image HFS+ "the other-volume seed"
 else
-  check test "$(stat -f %d "$work/hfs")" != "$(stat -f %d "$template_dir")"
-  STEAM_COMPAT_DATA_PATH="$work/hfs/game"
+  check test "$(stat -f %d "$work/mnt.hfs")" != "$(stat -f %d "$template_dir")"
+  STEAM_COMPAT_DATA_PATH="$work/mnt.hfs/game"
   WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
   mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
   printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
@@ -390,9 +406,36 @@ else
   check test "$(stat -f %l "$WINEPREFIX/drive_c/windows/ntdll.dll")" = 1
   printf changed > "$WINEPREFIX/drive_c/windows/ntdll.dll"
   check test "$(cat "$template_dir/pfx/drive_c/windows/ntdll.dll")" = dll
-  /usr/bin/hdiutil detach -quiet -force "$work/hfs"
+  /usr/bin/hdiutil detach -quiet -force "$work/mnt.hfs"
 fi
-rmdir "$work/hfs"
+
+# An external drive can come back with another device number: a seed killed on it is still
+# finished by the next launch.
+fixture
+if ! attach_image HFS+ drive; then
+  no_image HFS+ "the re-plugged drive seed"
+else
+  STEAM_COMPAT_DATA_PATH="$work/mnt.drive/game"
+  WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
+  mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"
+  printf save > "$WINEPREFIX/drive_c/users/steamuser/Documents/Game/slot.sav"
+  { kill_seed_after 1; } 2>/dev/null || true
+  check test ! -e "$WINEPREFIX/system.reg"
+  plugged=$(stat -f %d "$work/mnt.drive")
+  /usr/bin/hdiutil detach -quiet -force "$work/mnt.drive"
+  # Another disk takes the drive's old device node while it is away.
+  attach_image HFS+ other || true
+  if ! attach_image HFS+ drive; then
+    no_image HFS+ "the re-plugged drive seed"
+  else
+    check test "$(stat -f %d "$work/mnt.drive")" != "$plugged"
+    finish_dead_seeds
+    check seeded_whole
+    check grep -q 'finished seeding this prefix' "$log"
+    /usr/bin/hdiutil detach -quiet -force "$work/mnt.drive"
+  fi
+  [ ! -d "$work/mnt.other" ] || /usr/bin/hdiutil detach -quiet -force "$work/mnt.other" 2>/dev/null || true
+fi
 
 # A conflict anywhere moves nothing in.
 fixture
