@@ -75,7 +75,7 @@ Each game's Bridgeplay settings (graphics backend, Metal HUD, DLSS, frame genera
 
 Updates install themselves: Bridgeplay, its patch in Steam and the engine. **Refresh** on the Status page checks on demand.
 
-The installer includes Apple's Game Porting Toolkit redistributables under Apple's license, which allows non-commercial distribution only. Bridgeplay is free and non-commercial.
+The Setup Assistant's graphics download carries Apple's Game Porting Toolkit redistributables under Apple's license, which allows non-commercial distribution only. Bridgeplay is free and non-commercial.
 
 <p align="center">
   <img src="docs/readme/install-v5.png" alt="The Setup Assistant working through Your Mac, Rosetta, Graphics, Steam and Set Up" width="100%">
@@ -92,21 +92,21 @@ The installer includes Apple's Game Porting Toolkit redistributables under Apple
 | Mac | Apple Silicon, M1 or later. Intel Macs are not supported. |
 | macOS | 26 or later |
 | Steam | A Steam account. Windows games install from Steam as usual. |
-| Download | About 570 MB. Installing Rosetta 2 and Steam, and signing in to Steam, need internet. |
+| Download | About 530 MB, most of it the engine the Setup Assistant fetches. Installing Rosetta 2 and Steam, and signing in to Steam, need internet. |
 
 ## How it works
 
 Bridgeplay runs inside the native macOS Steam client and registers itself as a Steam Play compatibility tool. Under the hood:
 
 - **Engine:** CodeWeavers' open-source WineCX 11.17 with MSync, running under Rosetta 2. Bridgeplay does not include CrossOver: its free engine is built from the LGPL source CodeWeavers publishes ([dappermint/winecx](https://github.com/dappermint/winecx)). If you own CrossOver, Bridgeplay can run games on your copy instead.
-- **Graphics:** Apple's Game Porting Toolkit 4.0 beta 3 (D3DMetal). It is not stored in this repository; the installer ships its redistributables under Apple's non-commercial license (see Install). DXMT and DXVK are available for games that prefer them.
+- **Graphics:** Apple's Game Porting Toolkit 4.0 beta 3 (D3DMetal). It is not stored in this repository; the Setup Assistant downloads its redistributables, which ship under Apple's non-commercial license (see Install). DXMT and DXVK are available for games that prefer them.
 - **Extras:** NVAPI/NGX routing for DLSS on Apple's MetalFX, in-process frame generation on `CAMetalLayer`, per-game Game Mode, Retina back buffers and a controller layer for HID pads.
 
 <p align="center">
   <img src="docs/readme/architecture-v5.png" alt="How a Windows game reaches the Mac's GPU: Steam, Bridgeplay, the WineCX and Wine engines, D3DMetal, DXMT, DXVK and MoltenVK, then Metal, with the open-source project behind each piece" width="100%">
 </p>
 
-Building from source: see [docs/DEVELOPING.md](docs/DEVELOPING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/BUILD-LOCAL.md](docs/BUILD-LOCAL.md). The installer lives in [`installer/`](installer/) and is packaged by `scripts/package-installer.sh`.
+Building from source: see [docs/DEVELOPING.md](docs/DEVELOPING.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/BUILD-LOCAL.md](docs/BUILD-LOCAL.md). The graphics download (`Bridgeplay-Installer.zip`) is built from [`installer/`](installer/) by `scripts/package-installer.sh`.
 
 ## What Bridgeplay changes in Steam
 
