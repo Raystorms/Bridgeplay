@@ -437,6 +437,24 @@ else
   [ ! -d "$work/mnt.other" ] || /usr/bin/hdiutil detach -quiet -force "$work/mnt.other" 2>/dev/null || true
 fi
 
+# A volume without hard links (exFAT) is left as it was, so Wine builds the prefix as before.
+# The prefix is empty: macOS gives every entry made on exFAT a ._ companion, which a prefix
+# holding saves already fails prefix_is_bare on.
+fixture
+if ! attach_image ExFAT exfat; then
+  no_image exFAT "the seed without hard links"
+else
+  STEAM_COMPAT_DATA_PATH="$work/mnt.exfat/game"
+  WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
+  mkdir -p "$WINEPREFIX"
+  check prefix_is_bare
+  copy_template_into_prefix
+  check grep -q 'this volume has no hard links' "$log"
+  check test -z "$(ls -A "$WINEPREFIX")"
+  check test "$(find "$STEAM_COMPAT_DATA_PATH" -maxdepth 1 -name 'pfx.seeding.*' | wc -l | tr -d ' ')" = 0
+  /usr/bin/hdiutil detach -quiet -force "$work/mnt.exfat"
+fi
+
 # A conflict anywhere moves nothing in.
 fixture
 mkdir -p "$WINEPREFIX/drive_c/users/steamuser/Documents/Game"

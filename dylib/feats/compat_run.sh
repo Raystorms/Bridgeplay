@@ -2159,14 +2159,20 @@ copy_template_into_prefix() {
   if [ "$copied" -eq 0 ] && prefix_is_bare \
     && stat -f %i "$WINEPREFIX" > "$seed_scratch/.notproton-seed-target" 2>/dev/null \
     && merge_seed_tree check; then
-    seed_merging=1
-    if merge_seed_tree move; then
-      echo "=== $how ===" >> "$log" 2>&1 || true
+    # Files go in as hard links. Without them (exFAT, some network shares), back off before
+    # anything moves; staging is on the prefix's volume.
+    if ! ln "$seed_scratch/.notproton-seed-target" "$seed_scratch/.notproton-seed-link" 2>/dev/null; then
+      echo "=== this volume has no hard links, wine builds this prefix itself ===" >> "$log" 2>&1 || true
     else
-      echo "=== could not finish seeding from the template, wine completes this prefix ===" \
-        >> "$log" 2>&1 || true
+      seed_merging=1
+      if merge_seed_tree move; then
+        echo "=== $how ===" >> "$log" 2>&1 || true
+      else
+        echo "=== could not finish seeding from the template, wine completes this prefix ===" \
+          >> "$log" 2>&1 || true
+      fi
+      seed_merging=0
     fi
-    seed_merging=0
   else
     echo "=== could not seed from the template, wine builds this prefix itself ===" \
       >> "$log" 2>&1 || true
