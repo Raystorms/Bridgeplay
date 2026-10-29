@@ -1950,6 +1950,7 @@ in_template_env() {
 
 seed_scratch=""
 seed_building=0
+seed_merging=0
 # shellcheck disable=SC2329 # the traps in seed_prefix_from_template invoke this
 abandon_seed() {
   if [ -n "$seed_scratch" ]; then
@@ -1957,7 +1958,10 @@ abandon_seed() {
       in_template_env "$seed_scratch" "$WINESERVER" -k >/dev/null 2>&1 || true
       in_template_env "$seed_scratch" "$WINESERVER" -w >/dev/null 2>&1 || exit "$1"
     fi
-    rm -rf "$seed_scratch" 2>/dev/null || true
+    # Half moved into the prefix: finish now, or keep the rest for the next launch to finish.
+    if [ "$seed_merging" -eq 0 ] || { unnest_seed_entry && merge_seed_tree move; }; then
+      rm -rf "$seed_scratch" 2>/dev/null || true
+    fi
   fi
   exit "$1"
 }
@@ -2040,7 +2044,65 @@ build_prefix_template() {
   [ -f "$template_dir/pfx/system.reg" ]
 }
 
-install_seed_tree() (
+# Puts back a staged folder that mv put inside a folder that appeared at its name since the
+# check. Each folder move is noted first, so this also works after a launch killed mid-move.
+unnest_seed_entry() {
+  placing="$seed_scratch/.notproton-seed-placing"
+  [ -s "$placing" ] || return 0
+  # Cut short while it was noted, so the move never started.
+  { read -r staged && read -r source && read -r target; } < "$placing" || { : > "$placing"; return 0; }
+  case "$source:$target" in "$seed_scratch"/*:"$WINEPREFIX"/*) ;; *) return 1 ;; esac
+  nested="$target/${source##*/}"
+  if [ "$(stat -f %i "$target" 2>/dev/null)" != "$staged" ] \
+    && [ "$(stat -f %i "$nested" 2>/dev/null)" = "$staged" ]; then
+    mv -n "$nested" "$source" && [ ! -e "$nested" ] || return 1
+  fi
+  : > "$placing"
+}
+
+# Puts one staged entry at a free name in the prefix, never over something that appeared
+# there since the check: link(2) and symlink(2) refuse an existing name, and a folder that
+# appeared takes ours inside it, which goes back to staging.
+place_seed_entry() {
+  if [ -d "$1" ] && [ ! -L "$1" ]; then
+    staged=$(stat -f %i "$1") || return 1
+    printf '%s\n%s\n%s\n' "$staged" "$1" "$2" > "$seed_scratch/.notproton-seed-placing" || return 1
+    mv -n "$1" "$2" || return 1
+    if [ "$(stat -f %i "$2" 2>/dev/null)" = "$staged" ]; then
+      : > "$seed_scratch/.notproton-seed-placing"
+      return 0
+    fi
+    unnest_seed_entry
+    return 1
+  elif [ -L "$1" ]; then
+    link=$(readlink "$1") || return 1
+    ln -sh "$link" "$2" || return 1
+    if [ -L "$2" ] && [ "$(readlink "$2")" = "$link" ]; then
+      rm -f "$1"
+      return
+    fi
+    # ln made it inside a folder that appeared at $2, named after the link's target.
+    nested="$2/${link##*/}"
+    [ ! -L "$nested" ] || [ "$(readlink "$nested")" != "$link" ] || rm -f "$nested"
+    return 1
+  else
+    ln -h "$1" "$2" || return 1
+    if [ ! -L "$2" ] && [ "$1" -ef "$2" ]; then
+      rm -f "$1"
+      return
+    fi
+    [ ! "$1" -ef "$2/${1##*/}" ] || rm -f "$2/${1##*/}"
+    return 1
+  fi
+}
+
+# Moves the cloned template into the prefix, one rename per entry. It only descends into
+# folders the prefix already has (the Steam profile and dosdevices), so most of the tree
+# moves at once. "check" moves nothing and fails where "move" would. system.reg goes in
+# last: until it does, the prefix is not seeded.
+merge_seed_tree() (
+  mode=$1
+  same_volume "$seed_scratch" "$WINEPREFIX" || return 1
   set -- ""
   while [ "$#" -gt 0 ]; do
     relative=$1
@@ -2053,38 +2115,41 @@ install_seed_tree() (
       [ -e "$source" ] || [ -L "$source" ] || continue
       name=${source##*/}
       if [ -z "$relative" ]; then
-        case "$name" in system.reg|.update-timestamp) continue ;; esac
+        case "$name" in
+          system.reg|.update-timestamp|.notproton-seed-*) continue ;;
+        esac
       fi
       target="$target_dir/$name"
-      if [ -d "$source" ] && [ ! -L "$source" ]; then
-        if [ ! -e "$target" ] && [ ! -L "$target" ]; then
-          mkdir "$target" || return 1
-        fi
+      if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+        [ -w "$target_dir" ] || return 1
+        [ "$mode" = check ] || place_seed_entry "$source" "$target" || return 1
+      elif [ -d "$source" ] && [ ! -L "$source" ]; then
         [ -d "$target" ] && [ ! -L "$target" ] || return 1
         set -- "$@" "$relative/$name"
-      elif [ -e "$target" ] || [ -L "$target" ]; then
+      else
         case "$relative/$name" in
           /drive_c/users/steamuser/*) continue ;;
         esac
+        # Linked in by a launch killed before it removed the staged name.
+        [ ! -L "$source" ] && [ "$source" -ef "$target" ] && continue
         [ -L "$source" ] && [ -L "$target" ] \
           && [ "$(readlink "$source")" = "$(readlink "$target")" ] || return 1
-      elif [ -L "$source" ]; then
-        ln -sh "$(readlink "$source")" "$target" || return 1
-        [ -L "$target" ] && [ "$(readlink "$source")" = "$(readlink "$target")" ] || return 1
-      elif [ -f "$source" ]; then
-        ln -h "$source" "$target" || return 1
-        [ ! -L "$target" ] && [ "$source" -ef "$target" ] || return 1
-      else
-        return 1
       fi
     done
   done
-  ln -h "$seed_scratch/system.reg" "$WINEPREFIX/system.reg" \
-    && [ ! -L "$WINEPREFIX/system.reg" ] \
-    && [ "$seed_scratch/system.reg" -ef "$WINEPREFIX/system.reg" ] || return 1
-  if [ -f "$seed_scratch/.update-timestamp" ]; then
-    ln -h "$seed_scratch/.update-timestamp" "$WINEPREFIX/.update-timestamp" || return 1
-  fi
+  for name in system.reg .update-timestamp; do
+    source="$seed_scratch/$name"
+    target="$WINEPREFIX/$name"
+    if [ -f "$source" ] && [ ! -L "$source" ] && [ "$source" -ef "$target" ]; then
+      [ "$mode" = check ] || rm -f "$source" || return 1
+    elif [ -f "$source" ] && [ ! -L "$source" ]; then
+      [ ! -e "$target" ] && [ ! -L "$target" ] && [ -w "$WINEPREFIX" ] || return 1
+      [ "$mode" = check ] || place_seed_entry "$source" "$target" || return 1
+    elif [ -e "$source" ] || [ -L "$source" ]; then
+      return 1
+    fi
+  done
+  [ "$mode" = check ] || { [ -f "$WINEPREFIX/system.reg" ] && [ ! -L "$WINEPREFIX/system.reg" ]; }
 )
 
 copy_template_into_prefix() {
@@ -2101,14 +2166,67 @@ copy_template_into_prefix() {
     how="copied this prefix from the $runner_id template, not a clone"
     cp -R "$template_dir/pfx/." "$seed_scratch" 2>/dev/null && copied=0 || copied=$?
   fi
-  if [ "$copied" -eq 0 ] && prefix_is_bare && install_seed_tree; then
-    echo "=== $how ===" >> "$log" 2>&1 || true
+  # Files go in as hard links. Without them (exFAT, some network shares), back off before
+  # anything moves or is recorded for a later launch to finish; staging is on the prefix's
+  # volume. The target lets a later launch finish a merge this one could not, into this
+  # prefix only. It is the inode alone: an external drive can come back with another
+  # device number.
+  if [ "$copied" -eq 0 ] \
+    && ! ln "$seed_scratch/system.reg" "$seed_scratch/.notproton-seed-link" 2>/dev/null; then
+    echo "=== this volume has no hard links, wine builds this prefix itself ===" >> "$log" 2>&1 || true
+  elif [ "$copied" -eq 0 ] && prefix_is_bare \
+    && stat -f %i "$WINEPREFIX" > "$seed_scratch/.notproton-seed-target" 2>/dev/null \
+    && merge_seed_tree check; then
+    seed_merging=1
+    if merge_seed_tree move; then
+      echo "=== $how ===" >> "$log" 2>&1 || true
+    else
+      echo "=== could not finish seeding from the template, wine completes this prefix ===" \
+        >> "$log" 2>&1 || true
+    fi
+    seed_merging=0
   else
     echo "=== could not seed from the template, wine builds this prefix itself ===" \
       >> "$log" 2>&1 || true
   fi
   rm -rf "$seed_scratch" 2>/dev/null || true
   seed_scratch=""
+}
+
+# A launch killed while it moved the template in left the rest in its staging folder.
+finish_dead_seeds() {
+  dropping=""
+  for leftover in "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*; do
+    [ -d "$leftover" ] && [ ! -L "$leftover" ] || continue
+    case "${leftover##*.}" in ''|0|*[!0-9]*) continue ;; esac
+    [ "$(stat -f %u "$leftover" 2>/dev/null)" = "$(id -u)" ] || continue
+    kill -0 "${leftover##*.}" 2>/dev/null && continue
+    if [ ! -f "$leftover/.notproton-seed-target" ]; then
+      why="it stopped before it moved anything in"
+    elif [ "$(cat "$leftover/.notproton-seed-target" 2>/dev/null)" \
+      != "$(stat -f %i "$WINEPREFIX" 2>/dev/null)" ]; then
+      why="it was for a prefix that has been replaced since"
+    elif ! same_volume "$leftover" "$WINEPREFIX"; then
+      why="it is not on the prefix's volume"
+    else
+      seed_scratch=$leftover
+      if unnest_seed_entry && merge_seed_tree check && merge_seed_tree move; then
+        echo "=== finished seeding this prefix, which an earlier launch left half done ===" \
+          >> "$log" 2>&1 || true
+        why=""
+      else
+        why="it could not be finished, wine completes this prefix"
+      fi
+      seed_scratch=""
+    fi
+    [ -z "$why" ] || dropping="$dropping${leftover##*/}|$why
+"
+  done
+  sweep_dead_seeds "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*
+  printf '%s' "$dropping" | while IFS='|' read -r name why; do
+    [ ! -e "$STEAM_COMPAT_DATA_PATH/$name" ] || continue
+    echo "=== dropped $name, an earlier launch's unfinished seed: $why ===" >> "$log" 2>&1 || true
+  done
 }
 
 prefix_is_bare() (
@@ -2161,7 +2279,7 @@ template_identity() (
 # Each game's prefix is copied from one template (per runner) instead of running wineboot.
 # On APFS the copy is a clone, so it takes almost no space.
 seed_prefix_from_template() {
-  sweep_dead_seeds "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*
+  finish_dead_seeds
   [ -n "$runner_id" ] || return 0
   if ! prefix_is_bare; then
     [ -f "$WINEPREFIX/system.reg" ] \
