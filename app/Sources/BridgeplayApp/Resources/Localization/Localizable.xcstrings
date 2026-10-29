@@ -2543,6 +2543,38 @@
         }
       }
     },
+    "Bridgeplay is starting %@." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridgeplay sta avviando %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridgeplay 正在启动 %@。"
+          }
+        }
+      }
+    },
+    "Bridgeplay is starting this game." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridgeplay sta avviando questo gioco."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridgeplay 正在启动此游戏。"
+          }
+        }
+      }
+    },
     "Bridgeplay is still busy with another task. Try again when it finishes." : {
       "localizations" : {
         "it" : {
@@ -5086,6 +5118,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "获取 CrossOver"
+          }
+        }
+      }
+    },
+    "Getting the game ready…" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparazione del gioco…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备游戏…"
           }
         }
       }
@@ -8818,6 +8866,22 @@
         }
       }
     },
+    "Setting up Windows for this game…" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configurazione di Windows per questo gioco…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在为此游戏设置 Windows…"
+          }
+        }
+      }
+    },
     "Setting up compatibility tool" : {
       "localizations" : {
         "it" : {
@@ -9989,6 +10053,22 @@
         }
       }
     },
+    "Still starting…" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avvio ancora in corso…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仍在启动…"
+          }
+        }
+      }
+    },
     "Stopping Steam" : {
       "localizations" : {
         "it" : {
@@ -10561,6 +10641,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "首次启动需要更长时间"
+          }
+        }
+      }
+    },
+    "The first launch takes longer. The game may show a black screen for a while after it opens." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il primo avvio richiede più tempo. Una volta aperto, il gioco potrebbe mostrare una schermata nera per un po'."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "首次启动需要更长时间。游戏打开后可能会黑屏一段时间。"
           }
         }
       }
@@ -11409,6 +11505,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "游戏自身设置中的 Vulkan"
+          }
+        }
+      }
+    },
+    "Waiting for the game to open…" : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In attesa che il gioco si apra…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待游戏打开…"
           }
         }
       }

@@ -5,6 +5,9 @@ enum Launch {
     static func main() {
         // A game launch is waiting on this one: post and leave before anything else runs.
         if let parts = NotifyCommand.requested() { NotifyCommand.run(parts) }
+        if CommandLine.arguments.dropFirst().first == LaunchProgressCommand.flag {
+            LaunchProgressCommand.run(Array(CommandLine.arguments.dropFirst(2)))
+        }
         let rebuilding = CommandLine.arguments.dropFirst().first == RebuildPrefixCommand.flag
         // Out of the launching process group, so stopping the game in Steam cannot take
         // the rebuild with it.
