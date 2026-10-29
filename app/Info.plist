@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BridgeplayChannel</key>
+	<string>stable</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleLocalizations</key>
@@ -34,6 +36,8 @@
 	<string>26.0</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Bridgeplay looks in Downloads for Apple's Game Porting Toolkit disk image so you don't have to find it.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 NotProtonNot, Leon Seemann, Raymond Chin and contributors. GPL-3.0.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>

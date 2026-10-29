@@ -109,12 +109,13 @@ struct PinnedDownloadTests {
 
         #expect(!failure.detail.contains("could not reach"))
         #expect(failure.detail.contains(downloads.path(percentEncoded: false)))
-        #expect(reported.all.count == 1)
+        // One host tried; byte counts (" / ") follow it.
+        #expect(reported.all.filter { !$0.contains(" / ") }.count == 1)
     }
 
     @Test("A download has an overall deadline, not only an idle one")
     func downloadsHaveADeadline() {
-        #expect(PinnedDownload.session.configuration.timeoutIntervalForResource <= 60 * 60)
+        #expect(PinnedDownload.session.configuration.timeoutIntervalForResource <= 4 * 60 * 60)
     }
 
     private final class Trickle: URLProtocol, @unchecked Sendable {
@@ -138,6 +139,70 @@ struct PinnedDownloadTests {
         }
 
         override func stopLoading() { timer?.cancel() }
+    }
+
+    // 64 KB with a Content-Length, sent in eight pieces, so progress has something between 0 and done.
+    private final class Chunked: URLProtocol, @unchecked Sendable {
+        static let body = Data(repeating: 0x61, count: 64 * 1024)
+        private var timer: DispatchSourceTimer?
+
+        override class func canInit(with request: URLRequest) -> Bool { request.url?.host() == "chunked.invalid" }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Length": "\(Self.body.count)"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            var sent = 0
+            let timer = DispatchSource.makeTimerSource()
+            timer.schedule(deadline: .now(), repeating: .milliseconds(20))
+            timer.setEventHandler { [weak self] in
+                guard let self else { return }
+                let piece = Self.body.count / 8
+                self.client?.urlProtocol(self, didLoad: Self.body.subdata(in: sent..<sent + piece))
+                sent += piece
+                if sent >= Self.body.count {
+                    self.timer?.cancel()
+                    self.client?.urlProtocolDidFinishLoading(self)
+                }
+            }
+            timer.resume()
+            self.timer = timer
+        }
+
+        override func stopLoading() { timer?.cancel() }
+    }
+
+    // macOS 27's task.progress counts 100 units and stays at 5 until the end; the bar showed
+    // "5 bytes / 100 bytes" for the whole engine download.
+    @Test("Progress counts the bytes received, and moves before the download ends")
+    func progressCountsBytes() async throws {
+        let work = try scratchDirectory("pinned")
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        final class Counts: @unchecked Sendable {
+            private let lock = NSLock()
+            private var seen: [(received: Int64, total: Int64)] = []
+            func add(_ p: PinnedDownload.Progress) {
+                guard case .receiving(_, let received, let total, _, _) = p else { return }
+                lock.withLock { seen.append((received, total)) }
+            }
+            var all: [(received: Int64, total: Int64)] { lock.withLock { seen } }
+        }
+        let counts = Counts()
+        let size = Int64(Chunked.body.count)
+
+        _ = try await PinnedDownload.obtain(
+            file: "package.tar", sha256: Digest.sha256(of: Chunked.body),
+            bases: [URL(string: "https://chunked.invalid/")!],
+            into: work.appending(path: "downloads"), step: "test",
+            session: PinnedDownload.session(deadline: 30, protocols: [Chunked.self]),
+            report: { counts.add($0) })
+
+        #expect(!counts.all.isEmpty)
+        #expect(counts.all.allSatisfy { $0.total == size })
+        #expect(counts.all.contains { $0.received > 0 && $0.received < size })
     }
 
     @Test("A host that never finishes is given up on for the next one")
@@ -202,7 +267,8 @@ struct PinnedDownloadTests {
         )
 
         let label = try #require(reported.all.first)
-        #expect(reported.all.count == 1)
+        // One host tried; byte counts (" / ") follow it.
+        #expect(reported.all.filter { !$0.contains(" / ") }.count == 1)
         #expect(label.hasPrefix("Downloading from "))
         #expect(label.contains(serving.lastPathComponent))
     }

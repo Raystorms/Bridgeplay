@@ -7,6 +7,17 @@ MINCHECK_VER := 26.0
 GLASS_SDK := 26.0
 AVAIL    := -Werror=unguarded-availability-new
 
+# The Command Line Tools can't build the app (no xcstringstool or actool). When they are the
+# active developer dir, point make's commands at Xcode, as scripts/build-local.sh does.
+ifeq ($(origin DEVELOPER_DIR),undefined)
+ifeq ($(shell xcode-select -p 2>/dev/null),/Library/Developer/CommandLineTools)
+DEVELOPER_DIR := $(firstword $(wildcard /Applications/Xcode-beta.app/Contents/Developer /Applications/Xcode.app/Contents/Developer))
+ifneq ($(DEVELOPER_DIR),)
+export DEVELOPER_DIR
+endif
+endif
+endif
+
 CFLAGS   := -arch $(ARCH) -mmacosx-version-min=$(MIN_VER) $(AVAIL) \
             -std=c17 -O2 -Wall -Wextra -Wno-unused-parameter \
             -fPIC -MMD -MP \
@@ -47,6 +58,7 @@ SRCS := \
 	dylib/feats/compat.c \
 	dylib/feats/webui.c \
 	dylib/feats/compatsvc.c \
+	dylib/feats/prefixstate.c \
 	dylib/feats/usershortcuts.c \
 	dylib/feats/webpatch.c \
 	dylib/feats/nativeplatform.c \
@@ -73,8 +85,8 @@ DEPS := $(OBJS:.o=.d)
         tests-list overlay-shim overlay-shim-install overlay-shim-tests \
         overlay-shim-bench iconmaker icon \
         appinfo helpers-install ntdll-resolve bridge runcheck compatcheck \
-        compatsvc-check shortcutcheck scriptcheck envcheck buildcheck settingscheck routecheck bridgecheck gamedrivecheck \
-        gamefixescheck launchercheck padcheck launch-shell activatecheck compat-reported-check FORCE
+        compatsvc-check prefixstate-check shortcutcheck scriptcheck envcheck buildcheck settingscheck routecheck bridgecheck envpasscheck prefixnotecheck powernotecheck exitcheck anticheatcheck launchprogresscheck gamedrivecheck \
+        gamefixescheck launchercheck padcheck launch-shell activatecheck stamp-check versioncheck cicheck compat-reported-check FORCE
 
 APP_PAYLOAD := app/Sources/BridgeplayApp/Resources/payload
 
@@ -87,7 +99,7 @@ dylib: $(TARGET)
 $(APP_PAYLOAD):
 	@mkdir -p $(APP_PAYLOAD)
 
-TEST_PATHS := dylib/tests overlay-shim/tests app/Tests
+TEST_PATHS := dylib/tests overlay-shim/tests app/Tests scripts/tests
 
 tests-list:
 	@for p in $(TEST_PATHS); do echo $$p; done
@@ -100,6 +112,15 @@ runcheck:
 		$(call SKIP,runcheck,shellcheck); exit 0; fi; \
 	shellcheck dylib/feats/compat_run.sh && sh -n dylib/feats/compat_run.sh && \
 	echo "==> runcheck: the run script lints and parses clean"
+
+cicheck:
+	@if [ ! -f scripts/tests/cicheck.sh ]; then $(call SKIP,cicheck,scripts/tests/cicheck.sh); exit 0; fi; \
+	sh scripts/tests/cicheck.sh
+
+# Validate batch exit statuses without starting games.
+.PHONY: np-test-batch-check
+np-test-batch-check:
+	@sh scripts/tests/np-test-batch.sh
 
 .PHONY: seedcheck
 seedcheck:
@@ -126,6 +147,31 @@ bridgecheck:
 	@if [ ! -f dylib/tests/bridgecheck.sh ]; then $(call SKIP,bridgecheck,dylib/tests/bridgecheck.sh); exit 0; fi; \
 	sh dylib/tests/bridgecheck.sh dylib/feats/compat_run.sh
 
+envpasscheck:
+	@if [ ! -f dylib/tests/envpasscheck.sh ]; then \
+		$(call SKIP,envpasscheck,dylib/tests/envpasscheck.sh); exit 0; fi; \
+	sh dylib/tests/envpasscheck.sh dylib/feats/compat_run.sh
+
+prefixnotecheck:
+	@if [ ! -f dylib/tests/prefixnotecheck.sh ]; then $(call SKIP,prefixnotecheck,dylib/tests/prefixnotecheck.sh); exit 0; fi; \
+	sh dylib/tests/prefixnotecheck.sh dylib/feats/compat_run.sh
+
+powernotecheck:
+	@if [ ! -f dylib/tests/powernotecheck.sh ]; then $(call SKIP,powernotecheck,dylib/tests/powernotecheck.sh); exit 0; fi; \
+	sh dylib/tests/powernotecheck.sh dylib/feats/compat_run.sh
+
+exitcheck:
+	@if [ ! -f dylib/tests/exitcheck.sh ]; then $(call SKIP,exitcheck,dylib/tests/exitcheck.sh); exit 0; fi; \
+	sh dylib/tests/exitcheck.sh dylib/feats/compat_run.sh
+
+anticheatcheck:
+	@if [ ! -f dylib/tests/anticheatcheck.sh ]; then $(call SKIP,anticheatcheck,dylib/tests/anticheatcheck.sh); exit 0; fi; \
+	sh dylib/tests/anticheatcheck.sh dylib/feats/compat_run.sh
+
+launchprogresscheck:
+	@if [ ! -f dylib/tests/launchprogresscheck.sh ]; then $(call SKIP,launchprogresscheck,dylib/tests/launchprogresscheck.sh); exit 0; fi; \
+	sh dylib/tests/launchprogresscheck.sh dylib/feats/compat_run.sh
+
 gamedrivecheck:
 	@if [ ! -f dylib/tests/gamedrivecheck.sh ]; then $(call SKIP,gamedrivecheck,dylib/tests/gamedrivecheck.sh); exit 0; fi; \
 	sh dylib/tests/gamedrivecheck.sh dylib/feats/compat_run.sh
@@ -133,6 +179,11 @@ gamedrivecheck:
 gamefixescheck:
 	@if [ ! -f dylib/tests/gamefixescheck.sh ]; then $(call SKIP,gamefixescheck,dylib/tests/gamefixescheck.sh); exit 0; fi; \
 	sh dylib/tests/gamefixescheck.sh dylib/feats/compat_run.sh
+
+# The beta stamp, the version bump and the upstream sync, on throwaway copies of the repo.
+versioncheck:
+	@if [ ! -f dylib/tests/versioncheck.sh ]; then $(call SKIP,versioncheck,dylib/tests/versioncheck.sh); exit 0; fi; \
+	sh dylib/tests/versioncheck.sh
 
 padcheck:
 	@if [ ! -f dylib/tests/padcheck.sh ]; then $(call SKIP,padcheck,dylib/tests/padcheck.sh); exit 0; fi; \
@@ -147,15 +198,24 @@ compat-reported-check:
 	@if [ ! -f scripts/tests/compat-reported-commit.sh ]; then $(call SKIP,compat-reported-check,scripts/tests/compat-reported-commit.sh); exit 0; fi; \
 	sh scripts/tests/compat-reported-commit.sh
 
+# Offline test for compatible wiki pages with more than one Steam app ID.
+.PHONY: compat-reported-import-check
+compat-reported-import-check:
+	@python3 scripts/tests/compat-reported.py
+
 .PHONY: mincheck
 mincheck:
-	@sh dylib/tests/mincheck.sh "$(APP_BUNDLE)" "$(MINCHECK_VER)" "$(GLASS_SDK)"
+	@if [ ! -d "$(APP_BUNDLE)" ]; then echo "==> mincheck: $(APP_BUNDLE) not present, skipped (make app builds it)"; exit 0; fi; \
+	sh dylib/tests/mincheck.sh "$(APP_BUNDLE)" "$(MINCHECK_VER)" "$(GLASS_SDK)"
 
 .PHONY: l10ncheck
 l10ncheck:
-	@bin=$$(swift build --package-path app -c release --show-bin-path); \
-	python3 dylib/tests/l10ncheck.py app/Sources/BridgeplayApp/Resources/Localization/Localizable.xcstrings \
-		"$$bin/../../Intermediates.noindex/BridgeplayApp.build/$$(basename "$$bin")" zh-Hans it
+	@bin=$$(cd app/.build/release 2>/dev/null && pwd -P) || \
+		bin=$$(swift build --package-path app -c release --show-bin-path); \
+	for target in BridgeplayApp BridgeplayInstaller; do \
+		python3 dylib/tests/l10ncheck.py "app/Sources/$$target/Resources/Localization/Localizable.xcstrings" \
+			"$$bin/../../Intermediates.noindex/BridgeplayApp.build/$$(basename "$$bin")" zh-Hans it || exit $$?; \
+	done
 
 # runcheck owns compat_run.sh, whose warnings wait for a change that can move
 # the embedded __text baseline
@@ -179,6 +239,14 @@ compatcheck: $(RUN_SCRIPT_H)
 	$(TEST_CC) -I$(GENERATED_DIR) \
 	  -o $(COMPATCHECK) dylib/tests/compatcheck.c && \
 	$(COMPATCHECK)
+
+PREFIXSTATE_CHECK := $(OUT_DIR)/prefixstate-check
+
+prefixstate-check:
+	@if [ ! -f dylib/tests/prefixstate-check.c ]; then $(call SKIP,prefixstate-check,dylib/tests/prefixstate-check.c); exit 0; fi; \
+	mkdir -p $(OUT_DIR) && \
+	$(TEST_CC) -o $(PREFIXSTATE_CHECK) dylib/tests/prefixstate-check.c && \
+	$(PREFIXSTATE_CHECK)
 
 COMPATSVC_CHECK := $(OUT_DIR)/compatsvc-check
 
@@ -240,8 +308,14 @@ sigdb-fixtures:
 	@if [ ! -d $(SIGDB_FIXTURES) ] || [ ! -f dylib/tests/anchorcheck.c ]; then \
 		$(call SKIP,sigdb-fixtures,$(SIGDB_FIXTURES)); exit 0; fi; \
 	$(MAKE) -s $(ANCHORCHECK) || exit 1; \
-	fail=0; n=0; \
-	for f in $(SIGDB_FIXTURES)/*.json; do \
+	fail=0; n=0; live=$(OUT_DIR)/sigdb-fixtures-live; mkdir -p $$live || exit 1; \
+	for t in $(SIGDB_FIXTURES)/live/*.json; do \
+		out=$$($(ANCHORCHECK) --rebase "$$t" "$$live/$${t##*/}" 2>&1); rc=$$?; \
+		if [ $$rc -ne 0 ]; then \
+			echo "cannot build $$t against the installed client (rc=$$rc):"; \
+			echo "$$out" | tail -1; exit 1; fi; \
+	done; \
+	for f in $(SIGDB_FIXTURES)/*.json $$live/*.json; do \
 		n=$$((n+1)); \
 		want=$$(awk -v name="$${f##*/}" '$$2 == name { print $$1 }' $(SIGDB_FIXTURES)/EXPECTED); \
 		out=$$($(ANCHORCHECK) "$$f" 2>&1); rc=$$?; \
@@ -314,7 +388,7 @@ webpatch-fixtures:
 	if [ $$fail -eq 0 ]; then \
 		if command -v node >/dev/null 2>&1; then \
 			node dylib/tests/library-filter/behavior.js $$tmp/library.*.out.js || fail=1; \
-		else echo "==> library filter: node not found, skipped"; fi; \
+		else echo "==> webpatch-fixtures: library filter skipped, node not found"; fi; \
 	fi; \
 	rm -rf $$tmp; \
 	$(MAKE) -s $(NATIVEPLATFORMCHECK) && $(NATIVEPLATFORMCHECK) || fail=1; \
@@ -374,9 +448,18 @@ spawn-live: $(TARGET)
 
 APP_TESTS := app/Tests
 
+# SwiftPM on Xcode 27 beta (27A5218g) leaves Products/Debug/PackageFrameworks empty
+# and puts Sparkle.framework one level up, while the test bundle's rpath only looks
+# in PackageFrameworks, so the bundle fails to dlopen before a single test runs.
+# Build the tests, then link Sparkle where the rpath expects it. Build products only.
 app-tests:
 	@if [ ! -d $(APP_TESTS) ]; then $(call SKIP,app-tests,$(APP_TESTS)); exit 0; fi; \
-	touch app/Package.swift; cd app && swift test --no-parallel
+	touch app/Package.swift; cd app && swift build --build-tests && \
+	bin=$$(swift build --show-bin-path) && \
+	if [ -d "$$bin/PackageFrameworks" ] && [ -d "$$bin/Sparkle.framework" ] && \
+		[ ! -e "$$bin/PackageFrameworks/Sparkle.framework" ]; then \
+		ln -s ../Sparkle.framework "$$bin/PackageFrameworks/Sparkle.framework"; fi && \
+	swift test
 
 PANEL_TESTS := dylib/tests/panel-behavior
 
@@ -395,6 +478,7 @@ panel-behavior:
 	node $(PANEL_TESTS)/effective.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/localization.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/fex.js $(OUT_DIR)/panel-emit && \
+	node $(PANEL_TESTS)/prefix-row.js $(OUT_DIR)/panel-emit && \
 	echo "==> panel behavior: renders as expected, no stale arguments"
 
 CX_ROOT ?= /Applications/CrossOver Preview.app
@@ -523,97 +607,7 @@ $(APPINFO): helpers/appinfo.swift
 	swiftc -O -target $(ARCH)-apple-macos$(MIN_VER) -o $@ $<
 	@echo "==> Built $@"
 
-GAME_HOST := $(OUT_DIR)/game-host.dylib
-GAME_METADATA := $(OUT_DIR)/prepare-game-loader
-
-$(GAME_HOST): helpers/game-host.c
-	@mkdir -p $(OUT_DIR)
-	$(CC) -dynamiclib -arch arm64 -arch x86_64 -mmacosx-version-min=$(MIN_VER) -O2 -Wall -Wextra $< -o $@
-	codesign -f -s - --identifier com.notproton.game-host $@
-
-$(GAME_METADATA): helpers/prepare-game-loader.swift
-	@mkdir -p $(OUT_DIR)
-	swiftc -O -target $(ARCH)-apple-macos$(MIN_VER) $< -o $@
-	codesign -f -s - --identifier com.notproton.game-metadata $@
-
-.PHONY: game-host-check
-game-host-check: $(GAME_HOST) $(GAME_METADATA)
-	python3 helpers/tests/game-host.py
-	python3 helpers/tests/game-metadata.py $(GAME_METADATA)
-
-DUALSENSE_SRC := controllers/dualsense
-DUALSENSE_OUT := $(OUT_DIR)/controllers/dualsense
-DUALSENSE_RUNTIME := $(DUALSENSE_OUT)/bridge.dylib $(DUALSENSE_OUT)/broker $(DUALSENSE_OUT)/launch
-DUALSENSE_HEADERS := $(wildcard $(DUALSENSE_SRC)/*.h)
-
-$(DUALSENSE_OUT)/bridge.dylib: $(DUALSENSE_SRC)/bridge.m $(DUALSENSE_SRC)/AudioFacade.m $(DUALSENSE_HEADERS)
-	@mkdir -p $(DUALSENSE_OUT)
-	$(CC) -dynamiclib -arch arm64 -arch x86_64 -mmacosx-version-min=$(MIN_VER) -O2 -Wall $(filter %.m,$^) -framework Foundation -framework IOKit -framework CoreAudio -framework AudioUnit -lz -o $@
-	codesign -f -s - --identifier com.notproton.dualsense.bridge $@
-
-$(DUALSENSE_OUT)/broker: $(DUALSENSE_SRC)/broker.m $(DUALSENSE_SRC)/PCMTransport.m $(DUALSENSE_HEADERS)
-	@mkdir -p $(DUALSENSE_OUT)
-	$(CC) -arch $(ARCH) -mmacosx-version-min=$(MIN_VER) -O2 -Wall -fobjc-arc $(filter %.m,$^) -framework AudioToolbox -framework AppKit -framework GameController -framework CoreHaptics -framework IOKit -lz -o $@
-	codesign -f -s - --identifier com.notproton.dualsense.broker $@
-
-$(DUALSENSE_OUT)/launch: $(DUALSENSE_SRC)/launch.swift
-	@mkdir -p $(DUALSENSE_OUT)
-	swiftc -O -target $(ARCH)-apple-macos$(MIN_VER) $< -o $@
-	codesign -f -s - --identifier com.notproton.dualsense.launch $@
-
-.PHONY: dualsense dualsense-check
-dualsense: $(DUALSENSE_RUNTIME)
-
-dualsense-check: dualsense
-	$(CC) -arch arm64 -arch x86_64 $(DUALSENSE_SRC)/audio-test.c -framework CoreAudio -framework AudioUnit -o $(DUALSENSE_OUT)/audio-test
-	$(CC) -O2 $(DUALSENSE_SRC)/test-pcm-unit.c -lz -o $(DUALSENSE_OUT)/test-pcm-unit
-	$(CC) -O2 $(DUALSENSE_SRC)/test-controls.c -o $(DUALSENSE_OUT)/test-controls
-	$(DUALSENSE_OUT)/test-pcm-unit
-	$(DUALSENSE_OUT)/test-controls
-	$(CC) -O1 $(DUALSENSE_SRC)/hid-test.m -framework Foundation -framework IOKit -o $(DUALSENSE_OUT)/hid-test
-	$(DUALSENSE_OUT)/hid-test
-	$(CC) -O1 -fobjc-arc $(DUALSENSE_SRC)/output-test.m $(DUALSENSE_SRC)/PCMTransport.m -framework AudioToolbox -framework AppKit -framework GameController -framework CoreHaptics -framework IOKit -lz -o $(DUALSENSE_OUT)/output-test
-	$(DUALSENSE_OUT)/output-test
-	DSB_TEST_BUILD=$(DUALSENSE_OUT) python3 $(DUALSENSE_SRC)/test-launch.py
-	DSB_TEST_BUILD=$(DUALSENSE_OUT) python3 $(DUALSENSE_SRC)/test-bridge.py
-	DSB_TEST_BUILD=$(DUALSENSE_OUT) python3 $(DUALSENSE_SRC)/test-pcm.py
-	DSB_TEST_BUILD=$(DUALSENSE_OUT) DSB_TEST_DEFER_TIMERS=1 python3 $(DUALSENSE_SRC)/test-pcm.py
-	DSB_TEST_BUILD=$(DUALSENSE_OUT) python3 $(DUALSENSE_SRC)/test-lifecycle.py
-	DSB_TEST_BUILD=$(DUALSENSE_OUT) python3 $(DUALSENSE_SRC)/test-trigger-routing.py
-
-STEAM_RUMBLE_SRC := controllers/steam-input
-STEAM_RUMBLE_OUT := $(OUT_DIR)/controllers/steam-input
-STEAM_RUMBLE := $(STEAM_RUMBLE_OUT)/rumble.dylib
-STEAM_SDK := build/lsteamclient/steamworks_sdk_162
-STEAM_RUMBLE_FLAGS := -arch arm64 -arch x86_64 -mmacosx-version-min=$(MIN_VER) -std=c++17 -Wall -Wextra -I$(STEAM_SDK)
-
-$(STEAM_SDK)/steam_api.h: lsteamclient/fetch.sh
-	sh lsteamclient/fetch.sh
-	@touch $@
-
-$(STEAM_RUMBLE): $(STEAM_RUMBLE_SRC)/rumble.cpp $(STEAM_RUMBLE_SRC)/VirtualGamepad.h $(STEAM_RUMBLE_SRC)/SteamSession.h $(STEAM_SDK)/steam_api.h
-	@mkdir -p $(STEAM_RUMBLE_OUT)
-	clang++ -dynamiclib $(STEAM_RUMBLE_FLAGS) -O2 $< -framework CoreFoundation -framework IOKit -o $@
-	codesign -f -s - --identifier com.notproton.steam-input.rumble $@
-
-.PHONY: steam-rumble steam-rumble-check
-steam-rumble: $(STEAM_RUMBLE)
-
-steam-rumble-check: $(STEAM_RUMBLE)
-	clang++ -dynamiclib $(STEAM_RUMBLE_FLAGS) -O1 -Wno-unused-parameter $(STEAM_RUMBLE_SRC)/tests/mock-steam.cpp -o $(STEAM_RUMBLE_OUT)/steamclient.dylib
-	clang++ $(STEAM_RUMBLE_FLAGS) -g -O1 $(STEAM_RUMBLE_SRC)/tests/routing.cpp -framework CoreFoundation -framework IOKit -o $(STEAM_RUMBLE_OUT)/test-routing
-	$(STEAM_RUMBLE_OUT)/test-routing "$(CURDIR)/$(STEAM_RUMBLE_OUT)"
-	clang++ $(STEAM_RUMBLE_FLAGS) -g -O1 $(STEAM_RUMBLE_SRC)/tests/hooks.cpp -framework CoreFoundation -framework IOKit -o $(STEAM_RUMBLE_OUT)/test-hooks
-	$(STEAM_RUMBLE_OUT)/test-hooks
-	python3 $(STEAM_RUMBLE_SRC)/tests/launcher.py
-
-helpers-install: $(ICONMAKER) $(APPINFO) $(GAME_HOST) $(GAME_METADATA) $(DUALSENSE_RUNTIME) $(STEAM_RUMBLE)
-	$(call install_atomically,$(STEAM_RUMBLE),$(SUPPORT_DIR)/controllers/steam-input/rumble.dylib)
-	$(call install_atomically,$(DUALSENSE_OUT)/launch,$(SUPPORT_DIR)/controllers/dualsense/launch)
-	$(call install_atomically,$(DUALSENSE_OUT)/broker,$(SUPPORT_DIR)/controllers/dualsense/broker)
-	$(call install_atomically,$(DUALSENSE_OUT)/bridge.dylib,$(SUPPORT_DIR)/controllers/dualsense/bridge.dylib)
-	$(call install_atomically,$(GAME_HOST),$(SUPPORT_DIR)/game-host.dylib)
-	$(call install_atomically,$(GAME_METADATA),$(SUPPORT_DIR)/prepare-game-loader)
+helpers-install: $(ICONMAKER) $(APPINFO)
 	$(call install_atomically,$(ICONMAKER),$(SUPPORT_DIR)/iconmaker)
 	$(call install_atomically,$(APPINFO),$(SUPPORT_DIR)/appinfo)
 	@echo "==> Installed: $(SUPPORT_DIR)/{iconmaker,appinfo}"
@@ -643,6 +637,9 @@ sigdb-install:
 
 LAUNCHABLE_BUNDLES := $(HOME)/Desktop/Bridgeplay.app /Applications/Bridgeplay.app
 
+# The Chinese, Japanese and Korean fonts (about 85 MB) stay out of the app: CJKFonts.swift
+# downloads them from their own release, packed by scripts/package-fonts.sh.
+CJK_FONTS := malgun.ttf msgothic.ttc msyh.ttf msyhbd.ttf simsun.ttc
 FONT_FILES := --include='*/' --include='*.ttf' --include='*.ttc' --exclude='*'
 
 fonts-install:
@@ -651,11 +648,15 @@ fonts-install:
 	@rsync -a --delete $(FONT_FILES) build/fonts/ "$(SUPPORT_DIR)/fonts/"
 	@echo "==> Installed: $(SUPPORT_DIR)/fonts"
 
-deploy: $(TARGET) dylib-install sigdb-install fonts-install helpers-install
+deploy: $(TARGET) dylib-install sigdb-install fonts-install helpers-install prefix-command-install
 	@if [ ! -d "$(STEAM_APP)" ]; then \
 		echo "==> deploy: $(STEAM_APP) not found"; exit 1; fi
 	$(call install_atomically,$(TARGET),$(DEPLOY_DST))
 	@echo "==> Deployed: $(DEPLOY_DST) (restart Steam to load)"
+	@# The app's build record no longer matches Steam's dylib, and the app refuses to install over
+	@# a mismatch. Set it aside so the next app install sees an update instead.
+	@r="$(SUPPORT_DIR)/install-build.json"; \
+	if [ -f "$$r" ]; then mv -f "$$r" "$$r.before-deploy" && echo "==> Moved the app's build record to $$r.before-deploy"; fi
 	@for b in $(LAUNCHABLE_BUNDLES); do \
 		p=$$(find "$$b" -name notproton.dylib -type f 2>/dev/null | head -1); \
 		[ -n "$$p" ] || continue; \
@@ -687,14 +688,11 @@ bridge:
 fonts:
 	fonts/build.sh
 
-app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO) $(GAME_HOST) $(GAME_METADATA) $(DUALSENSE_RUNTIME) $(STEAM_RUMBLE)
+app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO)
 	@mkdir -p "$(APP_PAYLOAD)/signatures/macos.arm64"
-	@mkdir -p "$(APP_PAYLOAD)/controllers/steam-input"
-	cp -f $(STEAM_RUMBLE) "$(APP_PAYLOAD)/controllers/steam-input/"
-	@mkdir -p "$(APP_PAYLOAD)/controllers/dualsense"
-	cp -f $(DUALSENSE_RUNTIME) "$(APP_PAYLOAD)/controllers/dualsense/"
-	cp -f $(GAME_HOST) $(GAME_METADATA) "$(APP_PAYLOAD)/"
 	@mkdir -p "$(APP_PAYLOAD)/bridge"
+	@# Staged by 0.7.51 and earlier; left behind they fail the PAYLOAD_SIGN_IDS check.
+	@rm -rf "$(APP_PAYLOAD)/controllers" "$(APP_PAYLOAD)/game-host.dylib" "$(APP_PAYLOAD)/prepare-game-loader"
 	cp -f $(TARGET) "$(APP_PAYLOAD)/notproton.dylib"
 	cp -f $(OVERLAY_SHIM) "$(APP_PAYLOAD)/overlay-shim.dylib"
 	cp -f $(ICONMAKER) "$(APP_PAYLOAD)/iconmaker"
@@ -711,7 +709,7 @@ app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO) $(GAME_HOST) $(GA
 	done
 	@if [ ! -d build/fonts ]; then echo "build/fonts is missing, run: $(MAKE) fonts" >&2; exit 1; fi
 	@mkdir -p "$(APP_PAYLOAD)/fonts"
-	@rsync -a --delete build/fonts/ "$(APP_PAYLOAD)/fonts/"
+	@rsync -a --delete --delete-excluded $(foreach f,$(CJK_FONTS),--exclude='/$(f)') build/fonts/ "$(APP_PAYLOAD)/fonts/"
 	@stamp="$$(git log -1 --format=%ct 2>/dev/null)"; \
 	if [ -z "$$stamp" ]; then echo "build-time needs a git checkout" >&2; exit 1; fi; \
 	echo "$$stamp" > "$(APP_PAYLOAD)/build-time"
@@ -728,9 +726,12 @@ APP_BUILD    := $(shell sed -n 's/^\#define BRIDGEPLAY_BUILD \([0-9][0-9]*\)$$/\
 APP_UPSTREAM := $(shell sed -n 's/^\#define NOTPROTON_VERSION "\(.*\)"/\1/p' dylib/version.h)
 
 # The app's code signing identity. Ad hoc (-) by default, so any checkout builds; a release
-# uses a stable self-signed identity (BRIDGEPLAY_SIGN_IDENTITY, see docs/RELEASING.md) so the
+# uses the maintainer's Developer ID (BRIDGEPLAY_SIGN_IDENTITY, see docs/RELEASING.md) so the
 # designated requirement, and the macOS permissions keyed to it, survive updates.
 APP_SIGN_ID ?= $(or $(BRIDGEPLAY_SIGN_IDENTITY),-)
+# Notarization needs the hardened runtime and a secure timestamp. Only a Developer ID gets
+# them: library validation needs a Team ID, which ad hoc and self-signed identities lack.
+APP_SIGN_FLAGS := $(if $(findstring Developer ID Application:,$(APP_SIGN_ID)),--options runtime --timestamp)
 
 # Every Mach-O file in the bundled payload, path:identifier. `make app` signs them with
 # APP_SIGN_ID under these identifiers before the app's own signature, so a release gives
@@ -741,12 +742,6 @@ PAYLOAD_SIGN_IDS := \
 	overlay-shim.dylib:com.bridgeplay.overlay-shim \
 	iconmaker:com.bridgeplay.iconmaker \
 	appinfo:com.bridgeplay.appinfo \
-	game-host.dylib:com.notproton.game-host \
-	prepare-game-loader:com.notproton.game-metadata \
-	controllers/dualsense/bridge.dylib:com.notproton.dualsense.bridge \
-	controllers/dualsense/broker:com.notproton.dualsense.broker \
-	controllers/dualsense/launch:com.notproton.dualsense.launch \
-	controllers/steam-input/rumble.dylib:com.notproton.steam-input.rumble \
 	bridge/x86_64-unix-lsteamclient.so:com.bridgeplay.lsteamclient \
 	bridge/aarch64-unix-lsteamclient.so:com.bridgeplay.lsteamclient
 
@@ -761,6 +756,15 @@ ICON_CAR  := $(ICON_DIR)/Assets.car
 # Licence texts copied into Contents/Resources: GPL-3.0, NOTICE and every
 # third-party licence the bundle needs (LICENSE.dobby, LICENSE.sparkle, ...).
 APP_LICENSES := LICENSE $(sort $(wildcard LICENSE.*)) NOTICE
+.PHONY: prefix-command-install
+# Records an app bundle that is already built. Building it here would make every deploy
+# build the whole app.
+prefix-command-install:
+	@if [ ! -x "$(APP_BUNDLE)/Contents/MacOS/BridgeplayApp" ]; then \
+		echo "==> no $(APP_BUNDLE) yet, run make app for rebuilds from Steam"; exit 0; fi; \
+	mkdir -p "$(SUPPORT_DIR)" && \
+	printf '%s' "$(CURDIR)/$(APP_BUNDLE)/Contents/MacOS/BridgeplayApp" > "$(SUPPORT_DIR)/app-executable.new" && \
+	mv -f "$(SUPPORT_DIR)/app-executable.new" "$(SUPPORT_DIR)/app-executable"
 
 icon: $(ICON_CAR)
 
@@ -779,7 +783,11 @@ $(ICON_CAR): $(ICONGEN) $(ICON_MARK)
 	@test -s "$(ICON_DIR)/$(ICON_NAME).icns" || { echo "actool wrote no $(ICON_NAME).icns" >&2; exit 1; }
 	@echo "==> Built $@"
 
-app: app-payload $(ICON_CAR)
+# A malformed beta stamp fails before the slow build starts.
+stamp-check:
+	@sh scripts/stamp-beta.sh check
+
+app: stamp-check app-payload $(ICON_CAR)
 	swift build --package-path app -c release
 	rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources"
@@ -791,6 +799,7 @@ app: app-payload $(ICON_CAR)
 		"Set :CFBundleVersion $(APP_BUILD)" -c \
 		"Set :NotProtonVersion $(APP_UPSTREAM)" \
 		"$(APP_BUNDLE)/Contents/Info.plist"
+	@sh scripts/stamp-beta.sh apply "$(APP_BUNDLE)/Contents/Info.plist"
 	cp "$$(swift build --package-path app -c release --show-bin-path)/BridgeplayApp" \
 		"$(APP_BUNDLE)/Contents/MacOS/BridgeplayApp"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Frameworks"
@@ -802,6 +811,8 @@ app: app-payload $(ICON_CAR)
 		-replace -output "$(APP_BUNDLE)/Contents/MacOS/BridgeplayApp" \
 		"$(APP_BUNDLE)/Contents/MacOS/BridgeplayApp"
 	cp -R "$$(swift build --package-path app -c release --show-bin-path)/BridgeplayApp_BridgeplayApp.bundle" \
+		"$(APP_BUNDLE)/Contents/Resources/"
+	cp -R "$$(swift build --package-path app -c release --show-bin-path)/BridgeplayApp_BridgeplayUI.bundle" \
 		"$(APP_BUNDLE)/Contents/Resources/"
 	cp -R "$(APP_BUNDLE)/Contents/Resources/BridgeplayApp_BridgeplayApp.bundle/Contents/Resources/"*.lproj \
 		"$(APP_BUNDLE)/Contents/Resources/"
@@ -821,7 +832,7 @@ app: app-payload $(ICON_CAR)
 	@echo "==> Payload complete in the bundle"
 	@payload="$(APP_BUNDLE_PAYLOAD)"; \
 	for spec in $(PAYLOAD_SIGN_IDS); do \
-		codesign -f -s "$(APP_SIGN_ID)" -i "$${spec##*:}" "$$payload/$${spec%%:*}" || exit 1; \
+		codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) -i "$${spec##*:}" "$$payload/$${spec%%:*}" || exit 1; \
 	done; \
 	unlisted=$$(find "$$payload" -type f | while read -r f; do \
 		case "$$(file -b "$$f")" in (Mach-O*) ;; (*) continue ;; esac; \
@@ -832,18 +843,26 @@ app: app-payload $(ICON_CAR)
 		echo "$$unlisted" | sed 's/^/        /' >&2; \
 		exit 1; \
 	fi
-	@# Inside out, so Sparkle's helpers carry the same identity as the app. No hardened
-	@# runtime: library validation needs a Team ID, which a self-signed identity has none of.
+	@# The Wine binaries and libSDL2 Bridgeplay lays into its engines are committed ad hoc
+	@# and pinned. Apple notarizes only Developer ID code, so a release re-signs them under
+	@# their own identifiers; SignedPin.swift matches them either way.
+	@[ -z "$(APP_SIGN_FLAGS)" ] || find "$(APP_BUNDLE)/Contents/Resources" -path "$(APP_BUNDLE_PAYLOAD)" -prune \
+		-o -type f -print | while read -r f; do \
+		case "$$(file -b "$$f")" in (Mach-O*) ;; (*) continue ;; esac; \
+		codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) --preserve-metadata=identifier "$$f" || exit 1; \
+	done
+	@# Inside out, so Sparkle's helpers carry the same identity as the app.
 	@sparkle="$(APP_BUNDLE)/Contents/Frameworks/Sparkle.framework/Versions/B"; \
-	codesign -f -s "$(APP_SIGN_ID)" -i org.sparkle-project.Sparkle.Autoupdate "$$sparkle/Autoupdate" || exit 1; \
+	codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) -i org.sparkle-project.Sparkle.Autoupdate "$$sparkle/Autoupdate" || exit 1; \
 	for code in "$$sparkle"/XPCServices/*.xpc "$$sparkle/Updater.app" \
 		"$(APP_BUNDLE)/Contents/Frameworks/Sparkle.framework"; do \
-		codesign -f -s "$(APP_SIGN_ID)" --preserve-metadata=entitlements "$$code" || exit 1; \
+		codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) --preserve-metadata=entitlements "$$code" || exit 1; \
 	done
-	codesign -f -s "$(APP_SIGN_ID)" "$(APP_BUNDLE)"
+	codesign -f -s "$(APP_SIGN_ID)" $(APP_SIGN_FLAGS) "$(APP_BUNDLE)"
 	codesign --verify --strict --deep "$(APP_BUNDLE)"
 	@codesign -d -r- "$(APP_BUNDLE)" 2>&1 | sed -n 's/^#* *designated => /==> Designated requirement: /p'
-	@echo "==> Built $(APP_BUNDLE) ($(APP_VERSION) build $(APP_BUILD), based on NotProton $(APP_UPSTREAM))"
+	@plist="$(APP_BUNDLE)/Contents/Info.plist"; \
+	echo "==> Built $(APP_BUNDLE) ($$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$$plist") build $$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$$plist"), based on NotProton $(APP_UPSTREAM))"
 
 app-zip: app
 	rm -f "$(APP_ZIP)"
@@ -885,16 +904,21 @@ native-shim-tests:
 	@if [ ! -f native-shim/tests/run.sh ]; then $(call SKIP,native-shim-tests,native-shim/tests/run.sh); exit 0; fi; \
 	sh native-shim/tests/run.sh
 
-# Every check .github/workflows/app.yml runs, in its order, after `make app`.
+# Inventory fixtures exercise modern and legacy Steam libraries offline.
+.PHONY: np-inventory-check
+np-inventory-check:
+	@python3 scripts/tests/np-inventory.py
+
+# Every check .github/workflows/app.yml runs, after `make app`.
 # scripts/build-local.sh --checks runs this same target, so a local release build
 # and CI gate on one list. Each check runs even when an earlier one failed.
 # overlay-shim-tests is left out: it needs a Metal GPU and real frame timing.
 CI_CHECKS := mincheck l10ncheck \
-	sigcheck callscheck webpatch-fixtures peicon-fixtures panel-behavior spawn-env \
-	activatecheck compatcheck compatsvc-check shortcutcheck launch-shell envcheck \
-	buildcheck settingscheck routecheck bridgecheck gamedrivecheck launchercheck \
-	seedcheck gamefixescheck padcheck compat-reported-check np-native-tests native-shim-tests \
-	app-tests game-host-check dualsense-check steam-rumble-check
+	sigcheck callscheck np-test-batch-check webpatch-fixtures peicon-fixtures panel-behavior spawn-env \
+	activatecheck compat-reported-import-check compatcheck compatsvc-check prefixstate-check shortcutcheck launch-shell envcheck \
+	buildcheck settingscheck routecheck bridgecheck envpasscheck prefixnotecheck powernotecheck exitcheck anticheatcheck launchprogresscheck gamedrivecheck launchercheck \
+	seedcheck gamefixescheck versioncheck cicheck padcheck compat-reported-check np-inventory-check np-native-tests native-shim-tests \
+	app-tests native-installercheck
 
 # app.yml runs the checks that need the built app in its build job and the rest in a
 # parallel job; both lists together are CI_CHECKS.
@@ -906,11 +930,44 @@ ci-checks-built:
 	@$(MAKE) -s ci-checks CI_CHECKS="$(CI_CHECKS_BUILT)"
 ci-checks-source:
 	@$(MAKE) -s ci-checks CI_CHECKS="$(CI_CHECKS_SOURCE)"
+# The checks run side by side, CHECK_JOBS at a time (CHECK_JOBS=1 runs them one by one).
+# Each one's output goes to $(CHECK_LOGS)/<check>.log and is printed whole, in list order,
+# once all have finished. The slowest start first.
+CHECK_JOBS ?= $(shell sysctl -n hw.ncpu 2>/dev/null || echo 4)
+CHECK_LOGS := $(OUT_DIR)/check-logs
+CI_CHECKS_FIRST := app-tests panel-behavior launchercheck gamefixescheck
+CI_CHECKS_ORDERED := $(filter $(CI_CHECKS_FIRST),$(CI_CHECKS)) $(filter-out $(CI_CHECKS_FIRST),$(CI_CHECKS))
+
 ci-checks:
-	@failed=""; \
+	@rm -rf $(CHECK_LOGS) && mkdir -p $(CHECK_LOGS); \
+	echo "==> ci-checks: $(words $(CI_CHECKS)) checks, $(CHECK_JOBS) at a time"; \
+	$(MAKE) -s -j$(CHECK_JOBS) $(addprefix ci-run/,$(CI_CHECKS_ORDERED)); \
+	failed=""; \
 	for t in $(CI_CHECKS); do \
-		echo "==> [check] make -s $$t"; \
-		$(MAKE) -s $$t || failed="$$failed $$t"; \
+		rc=1; secs=?; \
+		if [ -f $(CHECK_LOGS)/$$t.rc ]; then read -r rc secs <$(CHECK_LOGS)/$$t.rc; fi; \
+		echo "==> [check] make -s $$t ($${secs}s)"; \
+		cat $(CHECK_LOGS)/$$t.log 2>/dev/null; \
+		if [ "$$rc" != 0 ]; then echo "==> [check] $$t failed with exit $$rc"; failed="$$failed $$t"; fi; \
 	done; \
+	skipped=$$(cd $(CHECK_LOGS) && grep -l '^==> [^ ]*: .*skipped' $(addsuffix .log,$(CI_CHECKS)) 2>/dev/null | sed 's/\.log$$//' | tr '\n' ' '); \
+	[ -z "$$skipped" ] || echo "==> ci-checks: skipped, so not passed: $$skipped"; \
 	if [ -n "$$failed" ]; then echo "==> ci-checks failed:$$failed" >&2; exit 1; fi; \
-	echo "==> ci-checks: all $(words $(CI_CHECKS)) checks passed"
+	if [ -n "$$skipped" ]; then echo "==> ci-checks: none failed, $$(echo $$skipped | wc -w | tr -d ' ') skipped"; \
+	else echo "==> ci-checks: all $(words $(CI_CHECKS)) checks passed"; fi
+
+# One check for ci-checks: always succeeds, leaving the exit status and seconds in <check>.rc
+ci-run/%:
+	@start=$$(date +%s); rc=0; \
+	$(MAKE) -s $* >$(CHECK_LOGS)/$*.log 2>&1 </dev/null || rc=$$?; \
+	secs=$$(($$(date +%s) - start)); \
+	echo "$$rc $$secs" >$(CHECK_LOGS)/$*.rc; \
+	if [ $$rc -eq 0 ]; then echo "--> $* passed in $${secs}s"; else echo "--> $* FAILED in $${secs}s"; fi
+
+.PHONY: native-installer native-installercheck
+native-installer:
+	sh scripts/package-native-installer.sh
+
+native-installercheck:
+	sh scripts/test-native-installer.sh
+	sh scripts/test-installer-cleanup.sh

@@ -66,10 +66,15 @@ def main():
         for p in d["query"]["pages"]:
             text = (p.get("revisions") or [{}])[0].get("slots", {}).get("main", {}).get("content", "")
             rating = field(text, "crossover").lower()
-            appid = field(text, "steam appid").split(",")[0].strip()
-            if rating in GOOD and appid.isdigit():
-                games[int(appid)] = {"appid": int(appid), "name": p["title"], "crossover": rating,
-                                     "page": "https://www.applegamingwiki.com/wiki/" + urllib.parse.quote(p["title"].replace(" ", "_"))}
+            if rating in GOOD:
+                for value in field(text, "steam appid").split(","):
+                    appid = value.strip()
+                    if appid.isdigit():
+                        games[int(appid)] = {
+                            "appid": int(appid), "name": p["title"], "crossover": rating,
+                            "page": "https://www.applegamingwiki.com/wiki/" +
+                                    urllib.parse.quote(p["title"].replace(" ", "_")),
+                        }
         print(f"  {min(i + 50, len(titles))}/{len(titles)}: {len(games)} should work", file=sys.stderr)
     out = {
         "source": "AppleGamingWiki, CrossOver ratings (https://www.applegamingwiki.com)",

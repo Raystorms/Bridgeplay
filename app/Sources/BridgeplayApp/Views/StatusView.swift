@@ -1,4 +1,5 @@
 // 'Status' view, see SystemStatus for actual logic
+import BridgeplayUI
 
 import SwiftUI
 
@@ -164,13 +165,13 @@ struct StatusRow: View {
 
 struct StatusView: View {
     @Environment(SystemStatus.self) private var status
-    // gamefixes/default.conf, read when the page opens; the switches write it straight away.
+    // Two of the Game Defaults (GameDefaults), read when the page opens; the switches write them straight away.
     @State private var metalHUD = GameDefaults.isOn(.metalHUD)
     @State private var highResolution = GameDefaults.isOn(.highResolution)
     @State private var gameDefaultsError: String?
 
     private static let updateBlockPrompt =
-        String(localized: "Steam client updates may break Bridgeplay. If you don't want to wait for Bridgeplay to be updated to be compatible with future Steam versions at the cost of not getting updates to the Steam client, you can stop the Steam client from updating itself.")
+        String(localized: "Steam client updates may break Bridgeplay. If you don't want to wait for Bridgeplay to be updated to be compatible with future Steam versions at the cost of not getting updates to the Steam client, you can stop the Steam client from updating itself. You also miss Steam's security fixes.")
 
     var body: some View {
         Group {
@@ -303,7 +304,8 @@ struct StatusView: View {
                         StatusAction(label: Remedy.settingsButton) {
                             Remedy.openSettings(pane)
                         }
-                    }
+                    },
+                    menu: ErrorReport.actions(failure, in: "Status")
                 )
             } else if let outcome = status.outcome {
                 StatusRow(title: String(localized: "Done"), value: outcome, tone: .ok)
@@ -317,9 +319,10 @@ struct StatusView: View {
                 HStack(spacing: 10) {
                     ProgressView()
                         .controlSize(.small)
-                    Text(activity)
+                    Text(DownloadMeter.shared.title ?? activity)
                         .foregroundStyle(.secondary)
                 }
+                DownloadStrip()
             }
 
             Section("Steam") {
@@ -397,7 +400,8 @@ struct StatusView: View {
                     label: String(localized: "Try Again"),
                     isProminent: true,
                     isEnabled: !migration.isRunning
-                ) { Task { await migration.retry(status) } }
+                ) { Task { await migration.retry(status) } },
+                menu: ErrorReport.actions(failure, in: "Folder move")
             )
         }
         if !migration.keptNotes.isEmpty {
@@ -451,12 +455,13 @@ struct StatusView: View {
                       value: String(localized: "Sharper on Retina displays, but games run slower."),
                       toggle: gameDefault(.highResolution, $highResolution))
             if let gameDefaultsError {
-                StatusRow(title: String(localized: "Something went wrong"), value: gameDefaultsError, tone: .bad)
+                StatusRow(title: String(localized: "Something went wrong"), value: gameDefaultsError, tone: .bad,
+                          menu: ErrorReport.actions(gameDefaultsError, in: "Game settings"))
             }
         } header: {
             Text("For Every Game")
         } footer: {
-            Text("A game's own Steam Properties › Compatibility settings win over these.")
+            Text("A game's own settings in Steam Properties › Bridgeplay win over these. Game Defaults has the rest.")
         }
     }
 
@@ -606,12 +611,14 @@ struct StatusView: View {
                 tone: .warning,
                 action: installAction(prominent: true)
             )
-        case .foreign:
+        case .foreign(let insert):
+            let tool = SteamBundle.foreignTool(in: insert, deployed: SupportPaths.Steam.deployedDylib.path(percentEncoded: false))
+                ?? insert
             StatusRow(
                 title: "Bridgeplay",
-                value: String(localized: "Another dylib is present."),
+                value: String(localized: "\(tool) is already set up in Steam."),
                 tone: .warning,
-                detail: String(localized: "Repair your Steam install before installing Bridgeplay.")
+                detail: String(localized: "Repair Steam to remove it, then install Bridgeplay.")
             )
         }
     }
@@ -620,8 +627,9 @@ struct StatusView: View {
         StatusRow(
             title: String(localized: "Block Steam client updates"),
             value: blocked
-                ? String(localized: "The Steam client will not update itself.")
+                ? String(localized: "Steam updates are blocked, security fixes included.")
                 : String(localized: "A Steam client update may break Bridgeplay."),
+            tone: blocked ? .warning : nil,
             toggle: blockUpdates
         )
         .disabled(!status.isIdle)

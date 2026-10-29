@@ -65,7 +65,9 @@ struct PlayReportsTests {
         #expect(session(45, status: 143, steam: true).inferredStatus(wineLog: nil) == .silver)
         #expect(session(45, status: 5).inferredStatus(wineLog: nil) == nil)
         #expect(session(10, status: 0).inferredStatus(wineLog: nil) == nil)
-        #expect(!session(0.5, status: 0).worthAsking(wineLog: nil))
+        #expect(session(0.5, status: 0).worthAsking(wineLog: nil))
+        #expect(session(0.1, status: 0).inferredStatus(wineLog: nil) == nil)
+        #expect(!session(0.5, status: 143, steam: true).worthAsking(wineLog: nil))
         #expect(session(0.5, status: 5).worthAsking(wineLog: nil))
         #expect(!session(60, status: 0).worthAsking(now: Date().addingTimeInterval(4 * 86400), wineLog: nil))
     }
@@ -106,6 +108,135 @@ struct PlayReportsTests {
         #expect(make("   ").note == nil)
         #expect(make(String(repeating: "x", count: 3000)).note?.count == 1000)
         #expect(make(nil).setup?["lowPower"] == "off")
+    }
+
+    @Test("The run script's exit summary says why the game quit")
+    func exitSummary() throws {
+        let ended = Self.local("Wed Oct 21 20:01:15 2026")
+        let quit = Self.log("""
+            === game exited status=3, killing wine prefix ===
+            === exit summary: exit status 3 after 75s, the game quit by itself (likely abort() in the C runtime or a breakpoint, usually after the game's own error message) ===
+            === session health: healthy after 75s ===
+            """)
+        let session = try #require(GameSession.last(in: quit, modified: ended))
+        #expect(session.summary(log: quit, wineLog: nil)
+                == "Session 1 min, exit status 3 after 75s, the game quit by itself (likely abort() in the C runtime or a breakpoint, usually after the game's own error message)")
+
+        let crashed = Self.log("""
+            === game exited status=5, killing wine prefix ===
+            === exit summary: exit status 5 after 12s, the game quit by itself (likely 0xc0000005, an access violation: the game crashed) ===
+            === exit cause: wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger... ===
+            === exit cause: Unhandled exception: page fault on read access to 0x00000000 in 64-bit code (0x0000000140001234). ===
+            """)
+        let crash = try #require(GameSession.last(in: crashed, modified: ended))
+        #expect(crash.summary(log: crashed, wineLog: "no error lines left in this tail")
+                == "Session 1 min, exit status 5 after 12s, the game quit by itself (likely 0xc0000005, an access violation: the game crashed), first Wine error: wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger...")
+    }
+
+    @Test("Without an exit summary the status stands, and Wine's first error is redacted")
+    func exitWithoutSummary() throws {
+        // An earlier run's summary is not this session's.
+        let log = """
+            === bridgeplay run Tue Oct 20 21:00:00 WIB 2026 ===
+            === game exited status=0, killing wine prefix ===
+            === exit summary: exit status 0 after 30 min, the game quit normally ===
+            === bridgeplay run Wed Oct 21 20:00:00 WIB 2026 ===
+            === game exited status=53, killing wine prefix ===
+
+            """
+        let session = try #require(GameSession.last(in: log, modified: Self.local("Wed Oct 21 20:00:10 2026")))
+        #expect(session.exitAccount(in: log) == nil)
+        let wineLog = "fixme:a\n0024:err:module:import_dll Library MSVCP140.dll (which is needed by L\"Z:\\\\Users\\\\someone\\\\Game.exe\") not found\n"
+        #expect(session.summary(log: log, wineLog: wineLog)
+                == "Session 0 min, exit status 53, first Wine error: 0024:err:module:import_dll Library MSVCP140.dll (which is needed by L\"Z:\\\\Users\\\\<user>\\\\Game.exe\") not found")
+        #expect(session.summary(log: log, wineLog: "wine: Unhandled exception, no details") == "Session 0 min, exit status 53, first Wine error: wine: Unhandled exception, no details")
+        #expect(session.summary(log: log, wineLog: nil) == "Session 0 min, exit status 53")
+    }
+
+    @Test("Wine's error lines are found anywhere in the log, once each")
+    func wineErrorLines() {
+        let log = """
+            wine: configuration in L"\\\\??\\\\C:\\\\users\\\\steamuser" has been updated.
+            0118:err:kerberos:kerberos_LsaApInitializePackage no Kerberos support, expect problems
+            wine: Call from 00006FFFFFC3A2B8 to unimplemented function api-ms-win-core-foo.dll.Bar, aborting
+            wine: Call from 00006FFFFFC3A2B8 to unimplemented function api-ms-win-core-foo.dll.Bar, aborting
+            wine client error:3f4: write: Bad file descriptor
+            """
+        #expect(GameReport.wineErrorLines(in: log[...], limit: 5) == [
+            "wine: Call from 00006FFFFFC3A2B8 to unimplemented function api-ms-win-core-foo.dll.Bar, aborting",
+            "wine client error:3f4: write: Bad file descriptor",
+        ])
+        #expect(GameReport.wineErrorLines(in: log[...], limit: 1).count == 1)
+    }
+
+    @Test("A crash early in a long Wine log still reaches the report")
+    func wineTail() {
+        let early = "wine: Unhandled page fault on read access to 0000000000000000 at address 0000000140001234 (thread 0124), starting debugger...\n"
+        let log = "fixme:a\n" + early + String(repeating: "trace line\n", count: 50_000) + "last line\n"
+        let tail = GameReport.wineTail(log, limit: 1000)
+        #expect(tail.count == 1000)
+        #expect(tail.hasPrefix("--- Wine error lines from earlier in this log ---\n" + early + "--- end of the log ---\n"))
+        #expect(tail.hasSuffix("trace line\nlast line\n"))
+        #expect(GameReport.wineTail("short\n", limit: 1000) == "short\n")
+        let quiet = String(repeating: "x\n", count: 1000)
+        #expect(GameReport.wineTail(quiet, limit: 100) == String(quiet.suffix(100)))
+
+        // A second error just inside the last 1000 characters gives way to the heading, so
+        // it moves up into it.
+        let late = "wine: could not load late.dll\n"
+        let filler = String(repeating: "f", count: 1000 - late.count - 20) + "\n"
+        let two = "fixme:a\n" + early + String(repeating: "trace line\n", count: 500) + late + filler
+            + String(repeating: "t\n", count: 10)
+        let both = GameReport.wineTail(two, limit: 1000)
+        #expect(both.count <= 1000)
+        #expect(both.contains("wine: could not load late.dll"))
+        #expect(both.hasPrefix("--- Wine error lines from earlier in this log ---\n" + early))
+        #expect(both.hasSuffix("t\nt\n"))
+    }
+
+    @Test("A report says when a newer Bridgeplay was out")
+    func newerRelease() throws {
+        let name = "latest-release-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        #expect(LatestRelease.newer(than: "44", defaults: defaults) == nil)
+        LatestRelease.record(build: "55", version: "0.7.38", defaults: defaults)
+        #expect(LatestRelease.newer(than: "44", defaults: defaults) == "0.7.38 (55)")
+        #expect(LatestRelease.newer(than: "55", defaults: defaults) == nil)
+        #expect(LatestRelease.newer(than: "56", defaults: defaults) == nil)
+        #expect(LatestRelease.newer(than: nil, defaults: defaults) == nil, "an unstamped build")
+
+        var machine = GameReport.Machine(chip: "Apple M2", memoryBytes: 8 * 1_073_741_824,
+                                         macOS: "macOS 27.0.1", bridgeplay: "0.7.0 (44)")
+        machine.newerRelease = "0.7.38 (55)"
+        let session = GameSession(id: "x", started: Date().addingTimeInterval(-27 * 60), ended: Date(),
+                                  exitStatus: 0, stoppedBySteam: false)
+        let payload = ReportPayload.make(name: "Roboquest", appID: "692890", status: .bronze, source: .tap,
+                                         session: session, log: nil, wineLog: nil, machine: machine,
+                                         install: "0F8FAD5B-D9CB-469F-A165-70867728950E")
+        #expect(payload.session == "Session 27 min, exit status 0. A newer Bridgeplay was out: 0.7.38 (55)")
+    }
+
+    @Test("Retina mode is read from the prefix's Mac Driver key")
+    func retinaFromUserReg() {
+        let on = "WINE REGISTRY Version 2\r\n[Software\\\\Wine\\\\Mac Driver] 1791551861\r\n#time=1dd\r\n\"RetinaMode\"=\"y\"\r\n\r\n[Software\\\\Wine\\\\X] 1\r\n\"RetinaMode\"=\"n\"\r\n"
+        #expect(GameReport.retina(on) == "on")
+        #expect(GameReport.retina(on.replacingOccurrences(of: "=\"y\"", with: "=\"n\"")) == "off")
+        #expect(GameReport.retina("[Software\\\\Wine\\\\X] 1\n\"RetinaMode\"=\"y\"\n") == "off", "another key's RetinaMode doesn't count")
+    }
+
+    @Test("Only a Has Issues payload carries its main problem")
+    func payloadIssue() {
+        let machine = GameReport.Machine(chip: "Apple M1", memoryBytes: 8 * 1_073_741_824,
+                                         macOS: "macOS 27.0", bridgeplay: "0.7.39 (56)")
+        let make = { (status: ReportStatus) in
+            ReportPayload.make(name: "CS2", appID: "730", status: status, source: .tap, session: .byHand(),
+                               log: nil, wineLog: nil, machine: machine, install: "0F8FAD5B-D9CB-469F-A165-70867728950E",
+                               issue: .performance)
+        }
+        #expect(make(.bronze).issue == .performance)
+        #expect(make(.platinum).issue == nil)
+        #expect(make(.borked).issue == nil)
     }
 }
 
@@ -261,6 +392,20 @@ struct PlayReportsFlowTests {
         updated.handle([found("10", minutes: 60), found("20", minutes: 60)])
         #expect(Set(updated.nudges.map(\.prefix.appID)) == ["10", "20"])
         #expect(updated.nudge?.prefix.appID == "10", "one card at a time, newest session first")
+    }
+
+    @Test("A game that quits cleanly within seconds is asked about once per version")
+    func quickCleanExit() throws {
+        let queue = try scratchDirectory("reports")
+        defer { try? FileManager.default.removeItem(at: queue) }
+        let (reports, _) = model("201", queue: queue)
+        let quick = found("30", minutes: 0.1, ago: 60)
+        #expect(quick.session.worthAsking(wineLog: nil))
+        reports.handle([quick])
+        #expect(reports.nudge?.prefix.appID == "30")
+        reports.dismiss()
+        reports.handle([found("30", minutes: 0.1)])
+        #expect(reports.nudges.isEmpty, "asked again in the same version")
     }
 
     @Test("A crash after a Smooth answer asks again in the same version")

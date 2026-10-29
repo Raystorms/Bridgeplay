@@ -9,7 +9,8 @@
 # rebased or taken with -X theirs, so local commits stay as they are. The only conflict
 # resolved automatically is dylib/version.h: Bridgeplay's lines are kept and
 # NOTPROTON_VERSION takes upstream's value. Any other conflict aborts that merge and
-# leaves the tree untouched. After a merge, scripts/bump-version.sh patch is committed.
+# leaves the tree untouched. After a merge on main, scripts/bump-version.sh patch is committed;
+# on dev (BRIDGEPLAY_BETA_BRANCH, default dev), where betas are built, nothing is bumped.
 
 set -eu
 
@@ -79,14 +80,21 @@ for entry in $pending; do
 		exit 1
 	fi
 	git checkout -q --ours dylib/version.h
-	sed -i '' "s/^#define NOTPROTON_VERSION \".*\"/#define NOTPROTON_VERSION \"$theirs\"/" dylib/version.h
+	sed "s/^#define NOTPROTON_VERSION \".*\"/#define NOTPROTON_VERSION \"$theirs\"/" dylib/version.h >dylib/version.h.tmp
+	cat dylib/version.h.tmp >dylib/version.h
+	rm dylib/version.h.tmp
 	git add dylib/version.h
 	git commit -q --no-edit
 	echo "==> kept Bridgeplay's version.h, NotProton $theirs"
 done
 
-# An upstream merge is a patch: versions move slowly, see docs/RELEASING.md.
-if [ "$(product_of <dylib/version.h)" = "$ours_before" ]; then
+# On dev nothing is bumped: the committed version stays X.Y.Z there, and the stable that
+# ships the beta takes the bump. On main (a security or crash hotfix from upstream) an upstream
+# merge is a patch: versions move slowly, see docs/RELEASING.md.
+branch=$(git symbolic-ref -q --short HEAD || true)
+if [ "$branch" = "${BRIDGEPLAY_BETA_BRANCH:-dev}" ]; then
+	echo "==> on $branch: no version bump committed; the stable that ships this beta gets it"
+elif [ "$(product_of <dylib/version.h)" = "$ours_before" ]; then
 	scripts/bump-version.sh patch
 	git commit -q -m "chore(release): bump Bridgeplay to $(product_of <dylib/version.h) after upstream merge" dylib/version.h
 fi

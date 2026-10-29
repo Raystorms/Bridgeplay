@@ -8,7 +8,8 @@ import UniformTypeIdentifiers
 enum AppVersion {
     static let fallback = "0.1.0-dev"
 
-    // The semver people see. It went from 3.5.0 back to 0.7.0, so it doesn't order installs.
+    // The label people see: X.Y.Z, or X.Y.Z-beta.N in a beta build. It went from 3.5.0 back to 0.7.0,
+    // so it never orders installs.
     static var display: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? fallback
     }
@@ -174,6 +175,7 @@ final class SystemStatus {
     func endRun() {
         generation += 1
         activity = nil
+        DownloadMeter.shared.clear()
         AppLog.note("run end\(failure == nil ? "" : " (failed)")")
     }
 
@@ -718,7 +720,7 @@ final class SystemStatus {
     private(set) var signingIdentityReady: Bool?
 
     func refreshSigningIdentity() async {
-        signingIdentityReady = await Task.detached(priority: .utility) { LocalSigning.existingHash() != nil }.value
+        signingIdentityReady = await Task.detached(priority: .utility) { LocalSigning.existing() != nil }.value
     }
 
     func trustThisMac() async {
@@ -871,6 +873,7 @@ final class SystemStatus {
         }.value
         snapshot = captured
         AppLog.note(captured)
+        if !captured.installContent.blocksInstallation { CJKFonts.fetchIfNeeded() }
         await refreshSigningIdentity()
         await refreshRunnerStorage(cleanTemplates: !captured.installContent.blocksInstallation)
     }

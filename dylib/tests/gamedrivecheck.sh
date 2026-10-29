@@ -9,7 +9,8 @@ body=$(sed -n '/^game_drive_record() {/,/^}/p;/^record_game_drive() {/,/^}/p;/^r
 body='without_lock_fds() { printf "%s\n" "${1##*/} $2" >> "$restarts"; }
 '"$body"
 
-work=$(cd "$(mktemp -d)" && pwd -P)
+# a failed mktemp must not leave work at the current folder, which the trap deletes
+work=$(mktemp -d) && work=$(cd "$work" && pwd -P) || exit 1
 trap 'rm -rf "$work"' EXIT
 
 fails=0

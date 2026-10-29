@@ -509,6 +509,7 @@ int main(int argc, char **argv)
 		xsetenv("STEAM_DYLD_INSERT_LIBRARIES", dyld);
 	} else {
 		unsetenv("DYLD_INSERT_LIBRARIES");
+		unsetenv("STEAM_DYLD_INSERT_LIBRARIES");
 	}
 
 	const char *log = getenv("NP_NATIVE_LOG");

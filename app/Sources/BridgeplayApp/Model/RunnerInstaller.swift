@@ -5,12 +5,13 @@ import Foundation
 
 enum RunnerInstaller {
 
-    static let step = String(localized: "Clone CrossOver")
+    static let step = String(localized: "Copy CrossOver's engine")
 
     static func clone(
         from install: CrossOverInstall,
         replacingExisting: Bool = false,
-        runners: URL = SupportPaths.runners
+        runners: URL = SupportPaths.runners,
+        running: (URL) -> Bool = { RunnerInstaller.isRunning(from: $0) }
     ) throws -> RunnerBuild {
         guard case .supported(let build) = install.support else {
             throw StepFailure(
@@ -32,10 +33,29 @@ enum RunnerInstaller {
             defer { try? fm.removeItem(at: staging) }
             try copyPayload(from: install.crossOverRoot, to: staging)
             try verifyClone(build: build, root: staging.appending(path: "CrossOver"))
-            if occupied {
-                try fm.removeItem(at: target)
+            clearQuarantine(at: staging.appending(path: "CrossOver"))
+            guard occupied else {
+                try fm.moveItem(at: staging, to: target)
+                return build
             }
-            try fm.moveItem(at: staging, to: target)
+            // Callers check for a running game before the engine download, which can take
+            // minutes, so a game started since then is caught here.
+            guard !running(target) else {
+                throw StepFailure(
+                    step: step,
+                    detail: String(localized: "A game or Wine tool is still running on build \(build.id). Quit it first.")
+                )
+            }
+            let old = target.deletingLastPathComponent().appending(path: ".\(target.lastPathComponent).removing")
+            try? fm.removeItem(at: old)
+            try fm.moveItem(at: target, to: old)
+            do {
+                try fm.moveItem(at: staging, to: target)
+            } catch {
+                try? fm.moveItem(at: old, to: target)
+                throw error
+            }
+            try? fm.removeItem(at: old)
             return build
         }
 
@@ -251,10 +271,7 @@ enum RunnerInstaller {
         let destination = landing.path(percentEncoded: false)
 
         let cloned = try Shell.run("/bin/cp", ["-c", "-R", source, destination])
-        if cloned.status == 0 {
-            scrubDownloadMarkers(at: landing)
-            return
-        }
+        if cloned.status == 0 { return }
 
         try? fm.removeItem(at: landing)
         let copied = try Shell.run("/bin/cp", ["-R", source, destination])
@@ -264,13 +281,15 @@ enum RunnerInstaller {
                 detail: String(localized: "Copying \(source) failed. \(copied.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
             )
         }
-        scrubDownloadMarkers(at: landing)
     }
 
-    static func scrubDownloadMarkers(at payload: URL) {
-        for marker in ["com.apple.quarantine", "com.apple.provenance"] {
-            _ = try? Shell.run("/usr/bin/xattr", ["-r", "-d", marker, payload.path(percentEncoded: false)])
-        }
+    // Only for a tree already checked against its pins: a CrossOver clone, or an engine built
+    // from pinned archives. A browser-downloaded CrossOver, or an engine archive that came in
+    // a browser-downloaded installer zip (tar passes the flag on), leaves quarantine on files
+    // Bridgeplay patches and signs ad hoc, and macOS then refuses to load them. -s keeps xattr
+    // on the links themselves, so a link in the tree can't clear a file outside it.
+    static func clearQuarantine(at tree: URL) {
+        _ = try? Shell.run("/usr/bin/xattr", ["-r", "-s", "-d", "com.apple.quarantine", tree.path(percentEncoded: false)])
     }
 
     static func verifyClone(build: RunnerBuild, root: URL) throws {

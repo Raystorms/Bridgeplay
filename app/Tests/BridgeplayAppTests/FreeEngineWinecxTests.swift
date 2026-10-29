@@ -228,6 +228,23 @@ struct FreeEngineWinecxTests {
         }
     }
 
+    // hide-wine-exports-patch: 11.17 ships kernel32 and kernelbase that can hide ntdll's
+    // wine_* exports; 11.15 keeps the runtime's.
+    @Test("The hide-Wine-exports kernel32 and kernelbase ship with the app and are pinned for 11.17",
+          arguments: FreeEngineWinecx.releases.map(\.build))
+    func hideWineExports(id: String) throws {
+        let release = try #require(FreeEngineWinecx.release(build: id))
+        let expected: Set<String> = release.build == "winecx-11.17"
+            ? ["lib/wine/x86_64-windows/kernel32.dll", "lib/wine/x86_64-windows/kernelbase.dll"] : []
+        #expect(Set(release.loader.map(\.path)) == expected)
+        let table = FreeEngineWinecx.expectedFiles(release)
+        for file in release.loader {
+            let bundled = try #require(Bundle.module.url(forResource: file.resource, withExtension: file.ext))
+            #expect(Digest.sha256IfPresent(bundled) == file.sha256, "\(file.resource)")
+            #expect(table[file.path] == file.sha256, "\(file.path)")
+        }
+    }
+
     // winecoreaudio-patch: 11.17 ships a winecoreaudio.so with half-period output pulls.
     @Test("The patched winecoreaudio ships with the app and is pinned for 11.17",
           arguments: FreeEngineWinecx.releases.map(\.build))
@@ -237,6 +254,23 @@ struct FreeEngineWinecxTests {
         #expect(Set(release.audio.map(\.path)) == expected)
         let table = FreeEngineWinecx.expectedFiles(release)
         for file in release.audio {
+            let bundled = try #require(Bundle.module.url(forResource: file.resource, withExtension: file.ext))
+            #expect(Digest.sha256IfPresent(bundled) == file.sha256, "\(file.resource)")
+            #expect(table[file.path] == file.sha256, "\(file.path)")
+        }
+    }
+
+    // d3dx11-patch: 11.17 ships d3dx11_43 and d3dx11_42 exporting D3DX11CreateThreadPump.
+    @Test("The patched d3dx11 DLLs ship with the app and are pinned for 11.17",
+          arguments: FreeEngineWinecx.releases.map(\.build))
+    func d3dx(id: String) throws {
+        let release = try #require(FreeEngineWinecx.release(build: id))
+        let expected: Set<String> = release.build == "winecx-11.17"
+            ? ["lib/wine/x86_64-windows/d3dx11_43.dll", "lib/wine/i386-windows/d3dx11_43.dll",
+               "lib/wine/x86_64-windows/d3dx11_42.dll", "lib/wine/i386-windows/d3dx11_42.dll"] : []
+        #expect(Set(release.d3dx.map(\.path)) == expected)
+        let table = FreeEngineWinecx.expectedFiles(release)
+        for file in release.d3dx {
             let bundled = try #require(Bundle.module.url(forResource: file.resource, withExtension: file.ext))
             #expect(Digest.sha256IfPresent(bundled) == file.sha256, "\(file.resource)")
             #expect(table[file.path] == file.sha256, "\(file.path)")
@@ -706,5 +740,44 @@ struct FreeEngineWinecxTests {
             lines.append("\(path) \(a[.type] ?? "") \(a[.size] ?? "") \(a[.modificationDate] ?? "")")
         }
         return lines.sorted()
+    }
+
+    // #1295: setup said "missing" for a file that could also be unreadable or changed.
+    @Test("A bundled file that is missing, unreadable or changed says which check failed")
+    func bundledSourceFailures() throws {
+        let dir = try makeDirectory("bundled")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let content = Data("pinned bundled file".utf8)
+        let fixture = dir.appending(path: "fixture.dll")
+        try content.write(to: fixture)
+        let bundle = try #require(Bundle(url: dir))
+        let pin = Digest.sha256(of: content)
+
+        func file(_ resource: String, _ sha256: String) -> WinecxBundledFile {
+            WinecxBundledFile(resource: resource, ext: "dll", path: "lib/wine/x86_64-windows/\(resource).dll",
+                              sha256: sha256)
+        }
+        func detail(_ file: WinecxBundledFile) -> String? {
+            do {
+                _ = try FreeEngineWinecx.bundledSource(file, in: bundle)
+                return nil
+            } catch {
+                return (error as? StepFailure)?.detail
+            }
+        }
+
+        #expect(try FreeEngineWinecx.bundledSource(file("fixture", pin), in: bundle).lastPathComponent == "fixture.dll")
+        #expect(detail(file("absent", pin))?.contains("missing its absent.dll") == true)
+        #expect(detail(file("fixture", String(repeating: "0", count: 64)))?.contains("doesn't match") == true)
+
+        let root = try makeDirectory("bundled-root")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FreeEngineWinecx.installBundled([file("fixture", pin)], root: root, bundle: bundle)
+        #expect(Digest.sha256IfPresent(root.appending(path: "lib/wine/x86_64-windows/fixture.dll")) == pin)
+
+        let path = fixture.path(percentEncoded: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path) }
+        #expect(detail(file("fixture", pin))?.contains("can't read") == true)
     }
 }

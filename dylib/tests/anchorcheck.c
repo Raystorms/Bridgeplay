@@ -3,7 +3,10 @@
 // and bytes recorded when the database was cut. Loaded rather than on disk because dyld
 // rebases and ObjC rewrites selector slots. Other builds must land on the live addresses.
 // Usage: out/anchorcheck [path-to-sigdb.json ...]
+//        out/anchorcheck --rebase TEMPLATE OUT   (see rebase_fixture)
 
+#include "cJSON.h"
+#include "../util/file.h"
 #include "../resolver/sigdb.h"
 #include "../resolver/resolver.h"
 #include "../resolver/anchor.h"
@@ -396,6 +399,116 @@ static int report_cross_db(const dbcheck_t *dbs, int n) {
     return bad;
 }
 
+// The first data slot holding `fn`, read after dyld has bound the image.
+static uintptr_t data_slot_holding(const image_t *im, uintptr_t fn) {
+    static const char *const segs[] = {"__DATA_CONST", "__AUTH_CONST", "__DATA"};
+    for (size_t s = 0; s < sizeof(segs) / sizeof(segs[0]); s++) {
+        uintptr_t base;
+        size_t size;
+        if (np_find_segment(im->mh, im->slide, segs[s], &base, &size) != 0) continue;
+        for (size_t off = 0; off + sizeof(uintptr_t) <= size; off += sizeof(uintptr_t))
+            if (*(const uintptr_t *)(base + off) == fn) return base + off;
+    }
+    return 0;
+}
+
+// The shortest exact run of bytes from `fn` that occurs nowhere else in __TEXT.
+static int sole_pattern_at(const image_t *im, uintptr_t fn, char *out, size_t out_sz) {
+    for (size_t len = 16; len <= 256 && len * 3 <= out_sz; len += 4) {
+        if (fn + len > im->text + im->text_sz) return -1;
+        size_t pos = 0;
+        for (size_t i = 0; i < len; i++)
+            pos += (size_t)snprintf(out + pos, out_sz - pos, i ? " %02X" : "%02X",
+                                    ((const uint8_t *)fn)[i]);
+        np_byte_pattern_t pat;
+        if (np_compile_pattern(out, &pat) != 0) return -1;
+        uintptr_t hit = np_scan_sole_match(im->text, im->text_sz, &pat);
+        np_release_pattern(&pat);
+        if (hit == fn) return 0;
+    }
+    return -1;
+}
+
+// Writes `tmpl` to `out` with the build-specific fields taken from the installed client,
+// so a fixture that has to describe the running client keeps doing so after a Steam update.
+// Each signature's anchor is resolved here; its result becomes func_addr_this_build. A
+// signature marked "fixture_rebase": "vtable_slot" also gets its anchor swapped for a data
+// slot holding that function and a byte pattern that matches only there.
+static int rebase_fixture(const char *tmpl, const char *out) {
+    np_sigdb_t db = {0};
+    if (np_load_profile(tmpl, &db) != 0) {
+        fprintf(stderr, "cannot load fixture template '%s'\n", tmpl);
+        return 2;
+    }
+    size_t len = 0;
+    uint8_t *text = np_read_whole_file(tmpl, &len);
+    cJSON *root = text ? cJSON_ParseWithLength((const char *)text, len) : NULL;
+    free(text);
+    cJSON *arr = root ? cJSON_GetObjectItem(root, "signatures") : NULL;
+    if (!arr || cJSON_GetArraySize(arr) != db.sig_count) {
+        fprintf(stderr, "cannot parse fixture template '%s'\n", tmpl);
+        cJSON_Delete(root);
+        np_free_profile(&db);
+        return 2;
+    }
+
+    int rc = 0;
+    for (int i = 0; i < db.sig_count && !rc; i++) {
+        np_sig_entry_t *sig = &db.signatures[i];
+        cJSON *elem = cJSON_GetArrayItem(arr, i);
+        const image_t *im = load_image(sig->module) == 0 ? image_for(sig->module) : NULL;
+        uintptr_t fn = im ? np_locate_anchor(im->mh, im->slide, im->text, im->text_sz,
+                                             &sig->anchor) : 0;
+        if (!fn) {
+            fprintf(stderr, "%s: the anchor of '%s' does not resolve in the installed "
+                    "client, so this fixture cannot be built here\n", tmpl, sig->name);
+            rc = 3;
+            break;
+        }
+
+        char hex[32];
+        cJSON *mode = cJSON_GetObjectItem(elem, "fixture_rebase");
+        if (cJSON_IsString(mode) && strcmp(mode->valuestring, "vtable_slot") == 0) {
+            uintptr_t slot = data_slot_holding(im, fn);
+            char pattern[sizeof(sig->aob_hex)];
+            if (!slot || sole_pattern_at(im, fn, pattern, sizeof(pattern)) != 0) {
+                fprintf(stderr, "%s: no data slot or unique byte pattern for '%s' in the "
+                        "installed client\n", tmpl, sig->name);
+                rc = 3;
+                break;
+            }
+            snprintf(hex, sizeof(hex), "0x%lx", (unsigned long)(slot - (uintptr_t)im->slide));
+            cJSON *anchor = cJSON_CreateObject();
+            cJSON_AddStringToObject(anchor, "kind", "vtable_slot");
+            cJSON_AddStringToObject(anchor, "va", hex);
+            cJSON_ReplaceItemInObject(elem, "anchor", anchor);
+            cJSON_DeleteItemFromObject(elem, "aob_hex");
+            cJSON_AddStringToObject(elem, "aob_hex", pattern);
+        } else if (mode) {
+            fprintf(stderr, "%s: unknown fixture_rebase for '%s'\n", tmpl, sig->name);
+            rc = 2;
+            break;
+        }
+        cJSON_DeleteItemFromObject(elem, "fixture_rebase");
+        snprintf(hex, sizeof(hex), "0x%lx", (unsigned long)(fn - (uintptr_t)im->slide));
+        cJSON_DeleteItemFromObject(elem, "func_addr_this_build");
+        cJSON_AddStringToObject(elem, "func_addr_this_build", hex);
+    }
+
+    if (!rc) {
+        char *json = cJSON_Print(root);
+        FILE *fh = json ? fopen(out, "w") : NULL;
+        if (!fh || fputs(json, fh) < 0 || fclose(fh) != 0) {
+            fprintf(stderr, "cannot write '%s'\n", out);
+            rc = 2;
+        }
+        free(json);
+    }
+    cJSON_Delete(root);
+    np_free_profile(&db);
+    return rc;
+}
+
 // Exit 1 is a database with problems, 2 one that could not be read, 3 this machine being
 // unable to answer. Callers feeding deliberately broken databases need those apart: a
 // rejected database is a result, an unloadable client image means nothing was checked.
@@ -404,6 +517,11 @@ int main(int argc, char **argv) {
     if (!home) { fprintf(stderr, "HOME unset\n"); return 3; }
 
     if (load_image(NP_MODULE_DEFAULT) != 0) return 3;
+
+    if (argc > 1 && strcmp(argv[1], "--rebase") == 0) {
+        if (argc != 4) { fprintf(stderr, "usage: anchorcheck --rebase TEMPLATE OUT\n"); return 2; }
+        return rebase_fixture(argv[2], argv[3]);
+    }
 
     char paths[MAX_DBS][512];
     int n = 0;

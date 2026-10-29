@@ -38,6 +38,49 @@ struct RunnerInstallerTests {
         #expect(RunnerInstaller.hasClone(forBuild: version, runners: runners))
     }
 
+    @Test("Clearing quarantine leaves the tree's other attributes alone")
+    func clearQuarantineOnlyRemovesQuarantine() throws {
+        let runners = try makeRunners()
+        defer { try? FileManager.default.removeItem(at: runners) }
+        let file = runners.appending(path: "lib/wine/ntdll.so")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("so".utf8).write(to: file)
+        try Shell.check("/usr/bin/xattr", ["-w", "com.apple.quarantine", "0083;6a2b3c4d;Safari;", file.path(percentEncoded: false)])
+        try Shell.check("/usr/bin/xattr", ["-w", "com.bridgeplay.keep", "1", file.path(percentEncoded: false)])
+
+        RunnerInstaller.clearQuarantine(at: runners)
+
+        let left = try Shell.run("/usr/bin/xattr", [file.path(percentEncoded: false)]).stdout
+        #expect(!left.contains("com.apple.quarantine"))
+        #expect(left.contains("com.bridgeplay.keep"))
+    }
+
+    @Test("Clearing quarantine doesn't follow links out of the tree")
+    func clearQuarantineStaysInsideTree() throws {
+        let runners = try makeRunners()
+        defer { try? FileManager.default.removeItem(at: runners) }
+        let tree = runners.appending(path: "tree")
+        let outside = runners.appending(path: "outside")
+        let outsideFile = outside.appending(path: "lib.dylib")
+        let lonelyFile = runners.appending(path: "lonely.dylib")
+        try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("dylib".utf8).write(to: outsideFile)
+        try Data("dylib".utf8).write(to: lonelyFile)
+        for target in [outside, outsideFile, lonelyFile] {
+            try Shell.check("/usr/bin/xattr", ["-w", "com.apple.quarantine", "0083;6a2b3c4d;Safari;", target.path(percentEncoded: false)])
+        }
+        try FileManager.default.createSymbolicLink(at: tree.appending(path: "dir"), withDestinationURL: outside)
+        try FileManager.default.createSymbolicLink(at: tree.appending(path: "file.dylib"), withDestinationURL: lonelyFile)
+
+        RunnerInstaller.clearQuarantine(at: tree)
+
+        for target in [outside, outsideFile, lonelyFile] {
+            let left = try Shell.run("/usr/bin/xattr", [target.path(percentEncoded: false)]).stdout
+            #expect(left.contains("com.apple.quarantine"), "\(target.lastPathComponent) lost its quarantine")
+        }
+    }
+
     // A CrossOver bundle holding only the files the clone path hashes, with the build describing
     // those exact bytes, so verification passes without a real 1.2G install to copy.
     private func makeSupportedInstall(
@@ -225,6 +268,44 @@ struct RunnerInstallerTests {
         try RunnerInstaller.verifyClone(build: build, root: installed)
         #expect(!FileManager.default.fileExists(atPath:
             runners.appending(path: ".crossover-\(build.id).new").path(percentEncoded: false)))
+    }
+
+    @Test("A runner a game is using is not replaced")
+    func runningRunnerIsNotReplaced() throws {
+        let runners = try makeRunners()
+        defer { try? FileManager.default.removeItem(at: runners) }
+        let (install, build) = try makeSupportedInstall(in: runners)
+        _ = try RunnerInstaller.clone(from: install, runners: runners)
+        let installed = SupportPaths.clonedRoot(forBuild: build.id, runners: runners)
+        let marker = installed.appending(path: "in-use")
+        try Data().write(to: marker)
+
+        let failure = #expect(throws: StepFailure.self) {
+            try RunnerInstaller.clone(from: install, replacingExisting: true, runners: runners, running: { _ in true })
+        }
+        #expect(failure?.detail.contains("still running") == true)
+        #expect(FileManager.default.fileExists(atPath: marker.path(percentEncoded: false)))
+        for leftover in [".new", ".removing"] {
+            #expect(!FileManager.default.fileExists(atPath:
+                runners.appending(path: ".crossover-\(build.id)\(leftover)").path(percentEncoded: false)))
+        }
+    }
+
+    @Test("An idle runner is replaced and the old copy removed")
+    func idleRunnerIsReplaced() throws {
+        let runners = try makeRunners()
+        defer { try? FileManager.default.removeItem(at: runners) }
+        let (install, build) = try makeSupportedInstall(in: runners)
+        _ = try RunnerInstaller.clone(from: install, runners: runners)
+        let installed = SupportPaths.clonedRoot(forBuild: build.id, runners: runners)
+        let marker = installed.appending(path: "old-copy")
+        try Data().write(to: marker)
+
+        _ = try RunnerInstaller.clone(from: install, replacingExisting: true, runners: runners, running: { _ in false })
+        #expect(!FileManager.default.fileExists(atPath: marker.path(percentEncoded: false)))
+        try RunnerInstaller.verifyClone(build: build, root: installed)
+        #expect(!FileManager.default.fileExists(atPath:
+            runners.appending(path: ".crossover-\(build.id).removing").path(percentEncoded: false)))
     }
 
     @Test("A rejected first copy is not left installed")

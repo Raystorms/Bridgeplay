@@ -39,9 +39,9 @@ for (const form of Object.keys(FORMS)) {
       hud.props.onChange(true);
       assert.equal(written.at(-1).opts, 'MTL_HUD_ENABLED=1 CX_GRAPHICS_BACKEND=dxmt %command%');
       for (const [mode, ...labels] of [
-        ['compat-hint', 'Enable CrossOver under Properties > Compatibility to install and run the Windows version.',
-          '请在“属性 > 兼容性”中启用 CrossOver，以安装并运行 Windows 版本。',
-          'Abilita CrossOver in Proprietà > Compatibilità per installare e avviare la versione Windows.'],
+        ['compat-hint', 'Enable CrossOver under Properties > Bridgeplay to install and run the Windows version.',
+          '请在“属性 > Bridgeplay”中启用 CrossOver，以安装并运行 Windows 版本。',
+          'Abilita CrossOver in Proprietà > Bridgeplay per installare e avviare la versione Windows.'],
         ['image-files-label', 'Image Files (*.tga,*.png,*.exe)', '图像文件 (*.tga,*.png,*.exe)',
           'File immagine (*.tga,*.png,*.exe)'],
         ['library-windows-hint', 'Show only games that run on Windows and do not have a macOS version',

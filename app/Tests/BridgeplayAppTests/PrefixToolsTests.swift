@@ -411,8 +411,17 @@ struct PrefixToolsTests {
 
         #expect(helper.upperBound == gate.lowerBound)
         #expect(gate.upperBound < alert.lowerBound)
-        // The first-launch notice uses osascript too, but as a notification, not an alert.
-        #expect(source.ranges(of: "display alert").count == 1, "an alert bypasses show_alert")
+        // The first-launch notice uses osascript too, but as a notification, not an alert. The
+        // rebuild failure alert, the rebuild prompt and the anti-cheat prompt carry their own gates.
+        #expect(source.ranges(of: "display alert").count == 3, "an alert bypasses show_alert")
+        #expect(source.ranges(of: "osascript").count == 6)
+        let anticheat = try #require(source.range(of: "kernel_anticheat_notice() {\n"))
+        #expect(source[anticheat.upperBound...].hasPrefix(#"  [ "$verb" = waitforexitandrun ] || return 0"#))
+        let rebuild = try #require(source.range(of: "rebuild_prefix() {"))
+        let prompt = try #require(source.range(of: "choice=$(osascript"))
+        #expect(source[rebuild.upperBound..<prompt.lowerBound].contains(#"[ "$verb" != run ] || { [ -n "$3" ] && return 0; exit 1; }"#))
+        let failure = try #require(source.range(of: "show_rebuild_failure() {\n"))
+        #expect(source[failure.upperBound...].hasPrefix(#"  [ "$verb" != run ] || return 0"#))
 
         let calls = source.ranges(of: "  show_alert \"")
         #expect(!calls.isEmpty)
@@ -421,6 +430,129 @@ struct PrefixToolsTests {
             let line = try #require(rest.firstIndex(of: "\n"))
             let next = rest[rest.index(after: line)...].prefix { $0 != "\n" }
             #expect(next.trimmingCharacters(in: .whitespaces) == "exit 1")
+        }
+    }
+
+    @Test("Steam rebuild requests use the exact selected tool and library", arguments: [true, false])
+    func steamRebuildRequest(keepBackup: Bool) throws {
+        let (dir, _, prefix) = try usedPrefixAndRunner()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let selected = InstalledTool(tool: CompatTool(name: "chosen", flavor: .rosetta, display: "Chosen"), build: "chosen-build")
+        let other = InstalledTool(tool: CompatTool(name: "old", flavor: .fex, display: "Old"), build: "old-build")
+        let args = [prefix.root.path(percentEncoded: false), selected.name, selected.build,
+                    selected.tool.flavor.rawValue, keepBackup ? "keep-backup" : "discard-backup"]
+        let request = try RebuildPrefixCommand.request(args, tools: [other, selected])
+        #expect(request.prefix.root == prefix.root)
+        #expect(request.tool == selected)
+        #expect(request.keepBackup == keepBackup)
+        for index in 0..<args.count {
+            var invalid = args
+            invalid[index] = "invalid"
+            #expect(throws: StepFailure.self) { try RebuildPrefixCommand.request(invalid, tools: [selected]) }
+        }
+        #expect(throws: StepFailure.self) { try RebuildPrefixCommand.request([], tools: [selected]) }
+        #expect(throws: StepFailure.self) { try RebuildPrefixCommand.request(args + ["extra"], tools: [selected]) }
+        #expect(throws: StepFailure.self) { try RebuildPrefixCommand.request(args, tools: []) }
+    }
+
+    @Test("A selected-tool rebuild preserves saves and records the selected build", arguments: [true, false])
+    func steamRebuildSelectedTool(keepBackup: Bool) throws {
+        let (dir, runner, prefix) = try usedPrefixAndRunner()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let tool = InstalledTool(tool: CompatTool(name: "chosen", flavor: .rosetta, display: "Chosen"), build: "chosen-build")
+        let runners = dir.appending(path: "runners")
+        let target = SupportPaths.clonedRoot(forBuild: tool.build, runners: runners)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: runner, to: target)
+        let claim = try #require(PrefixStore.claim(prefix))
+        #expect(throws: StepFailure.self) {
+            try PrefixTools.recreate(prefix, as: tool, runners: runners, keepBackup: keepBackup)
+        }
+        #expect(PrefixTools.buildRecord(of: prefix) == nil)
+        #expect(PrefixStore.backups(of: prefix).isEmpty)
+        claim.release()
+        var phases: [RebuildPhase] = []
+        let backup = try PrefixTools.recreate(
+            prefix, as: tool, runners: runners, keepBackup: keepBackup, progress: { phases.append($0) })
+        #expect(phases == [.settingUp, .copying, .finishing])
+        #expect((backup != nil) == keepBackup)
+        #expect(PrefixStore.backups(of: prefix).count == (keepBackup ? 1 : 0))
+        #expect(PrefixTools.buildRecord(of: prefix)?.build == tool.build)
+        let save = prefix.pfx.appending(path: "drive_c/users/steamuser/AppData/Roaming/game/save.dat")
+        #expect(try String(contentsOf: save, encoding: .utf8) == "save")
+    }
+
+    @Test("Rebuild progress lands beside the prefix and nowhere else")
+    func rebuildStatusFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "np-status-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let root = dir.appending(path: "steamapps/compatdata/480")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        #expect(RebuildPrefixCommand.statusFile(root.path(percentEncoded: false))
+            == root.standardizedFileURL.appending(path: "notproton-rebuild"))
+        #expect(RebuildPrefixCommand.statusFile("relative/compatdata/480") == nil)
+        #expect(RebuildPrefixCommand.statusFile(dir.path(percentEncoded: false)) == nil)
+        #expect(RebuildPrefixCommand.statusFile(root.appending(path: "missing").path(percentEncoded: false)) == nil)
+    }
+
+    @Test("A second rebuild of a prefix is refused and leaves the first one's progress alone")
+    func secondRebuildIsRefused() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "np-second-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let root = dir.appending(path: "steamapps/compatdata/480")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let status = try #require(RebuildPrefixCommand.statusFile(root.path(percentEncoded: false)))
+        try Data("copy\n4242\n".utf8).write(to: status)
+
+        let first = try RebuildPrefixCommand.claimRebuild(beside: status)
+        defer { FileLock.release(first) }
+        try FileManager.default.createDirectory(at: root.appending(path: "pfx"), withIntermediateDirectories: true)
+        let tool = InstalledTool(tool: CompatTool(name: "t", flavor: .rosetta, display: "T"), build: "b")
+        #expect(throws: StepFailure.self) {
+            try RebuildPrefixCommand.run([root.path(percentEncoded: false), "t", "b", "rosetta", "keep-backup"], tools: { [tool] })
+        }
+        #expect(try String(contentsOf: status, encoding: .utf8) == "copy\n4242\n")
+    }
+
+    @Test("Invalid rebuild requests create no progress or lock files")
+    func invalidRebuildWritesNothing() throws {
+        let (dir, _, prefix) = try usedPrefixAndRunner()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(throws: StepFailure.self) {
+            try RebuildPrefixCommand.run([prefix.root.path, "missing", "b", "fex", "keep-backup"], tools: { [] })
+        }
+        for name in [RebuildPrefixCommand.statusName, RebuildPrefixCommand.rebuildLockName] {
+            #expect(!FileManager.default.fileExists(atPath: prefix.root.appending(path: name).path))
+        }
+    }
+
+    @Test("A translocated rebuild app is not recorded as a persistent path")
+    func translocatedRebuildAppIsNotRecorded() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "np-helper-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appending(path: "AppTranslocation/id/d/Bridgeplay.app/Contents/MacOS/BridgeplayApp")
+        let support = dir.appending(path: "support")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        try Data("stale".utf8).write(to: support.appending(path: RebuildPrefixCommand.executableRecord))
+        try RebuildPrefixCommand.recordExecutable(source, in: support)
+        #expect(!FileManager.default.fileExists(atPath: support.appending(path: RebuildPrefixCommand.executableRecord).path))
+    }
+
+    @Test("A queued installation lock times out without disturbing its holder")
+    func rebuildLockWaitIsBounded() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "np-wait-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let held = try DeploymentContent.acquireInstallationLock(in: dir, steamFolder: nil)
+        defer { held.release() }
+        let start = ProcessInfo.processInfo.systemUptime
+        #expect(throws: StepFailure.self) {
+            try DeploymentContent.acquireInstallationLock(in: dir, steamFolder: nil, waiting: true, waitTimeout: 0.1)
+        }
+        #expect(ProcessInfo.processInfo.systemUptime - start < 2)
+        #expect(throws: StepFailure.self) {
+            try DeploymentContent.acquireInstallationLock(in: dir, steamFolder: nil)
         }
     }
 
@@ -557,7 +689,8 @@ struct PrefixToolsTests {
         // Replaced, both the file the arch is read from and what an installer left beside it.
         #expect(text("drive_c/windows/system32/ntdll.dll") == "fresh")
         #expect(text("drive_c/windows/vcruntime.dll") == nil)
-        #expect(text("drive_c/Program Files/redist/thing.dll") == nil)
+        // Program Files can hold saves, so what the template lacks comes over.
+        #expect(text("drive_c/Program Files/redist/thing.dll") == "installed")
 
         // Inside the prefix, so the folder Steam syncs is the folder the game reads. The home
         // folder the template used to point at keeps what is in it and is no longer reached.
@@ -892,9 +1025,9 @@ struct PrefixToolsTests {
         #expect(try Data(contentsOf: driveC.appending(path: "Games/Quake/quake.exe")) == Data("exe".utf8))
         #expect(try Data(contentsOf: driveC.appending(path: "notes.txt")) == Data("notes".utf8))
 
-        // A name the template does make is the template's, arch and all.
+        // windows is the template's, arch and all.
         #expect(!fm.fileExists(
-            atPath: driveC.appending(path: "Program Files/redist/thing.dll").path(percentEncoded: false)))
+            atPath: driveC.appending(path: "windows/vcruntime.dll").path(percentEncoded: false)))
     }
 
     // Emptying the prefix first meant a wineboot that failed left the game with nothing at
@@ -951,6 +1084,67 @@ struct PrefixToolsTests {
         #expect(!fm.fileExists(
             atPath: prefix.root.appending(path: "pfx.rebuild").path(percentEncoded: false)))
         #expect(PrefixStore.backups(of: prefix).isEmpty)
+    }
+
+    // Ubisoft Connect keeps saves under Program Files (x86), and the discard path deleted them.
+    @Test("A discard rebuild carries Program Files and ProgramData, fresh files win")
+    func discardRebuildCarriesProgramFiles() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appending(path: "np-progfiles-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: dir) }
+        let home = dir.appending(path: "home/Documents")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+
+        let prefix = try usedPrefix(in: dir, home: home)
+        let drive = prefix.pfx.appending(path: "drive_c")
+        for (path, body) in [
+            ("Program Files (x86)/Ubisoft/savegames/1.save", "ubi"),
+            ("ProgramData/Foo/x.dat", "foo"),
+            ("ProgramData/Shared/both.ini", "old"),
+        ] {
+            let file = drive.appending(path: path)
+            try fm.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(body.utf8).write(to: file)
+        }
+        let runner = try fakeRunner(in: dir, home: home, extra: """
+            mkdir -p "$WINEPREFIX/drive_c/ProgramData/Shared"; \
+            printf fresh > "$WINEPREFIX/drive_c/ProgramData/Shared/both.ini"
+            """)
+
+        #expect(try PrefixTools.recreate(prefix, runner: runner, keepBackup: false) == nil)
+
+        func text(_ path: String) -> String? {
+            try? String(contentsOf: prefix.pfx.appending(path: "drive_c/\(path)"), encoding: .utf8)
+        }
+        #expect(text("Program Files (x86)/Ubisoft/savegames/1.save") == "ubi")
+        #expect(text("ProgramData/Foo/x.dat") == "foo")
+        #expect(text("ProgramData/Shared/both.ini") == "fresh")
+        #expect(text("windows/system32/ntdll.dll") == "fresh")
+        #expect(PrefixStore.backups(of: prefix).isEmpty)
+    }
+
+    @Test("A discard rebuild keeps the old prefix when Program Files cannot be carried")
+    func discardRebuildKeepsBackupOnMiss() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appending(path: "np-progfiles-miss-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: dir) }
+        let home = dir.appending(path: "home/Documents")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+
+        let prefix = try usedPrefix(in: dir, home: home)
+        let save = prefix.pfx.appending(path: "drive_c/Program Files/redist/thing.dll")
+        try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: save.path(percentEncoded: false))
+        defer {
+            try? fm.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: save.path(percentEncoded: false))
+        }
+
+        let kept = try #require(try PrefixTools.recreate(
+            prefix, runner: try fakeRunner(in: dir, home: home), keepBackup: false))
+        #expect(PrefixStore.backups(of: prefix).count == 1)
+        #expect(fm.fileExists(atPath: kept.appending(path: "drive_c/Program Files/redist/thing.dll")
+            .path(percentEncoded: false)))
     }
 
     // Steam lays a prefix down in stages, so one caught early holds no profile. That is nothing
@@ -1618,17 +1812,21 @@ struct PrefixLastBuildTests {
         #expect(PrefixTools.tool(for: prefix, among: both, runners: runners)?.name == "bridgeplay-proton-fex-rosetta")
     }
 
-    @Test("A prefix another CrossOver updated gets no tool, so nothing runs over it")
-    func noToolForAnotherWine() throws {
+    @Test("A prefix another CrossOver updated runs on an installed tool of its arch")
+    func anotherWineFallsBackToItsArch() throws {
         let (dir, runners, prefix) = try makeWorld()
         defer { try? FileManager.default.removeItem(at: dir) }
         let release = try #require(SupportedRunners.all.first { $0.id == Self.release })
         let tools = SupportedRunners.tools(for: [release])
 
         try updated(prefix, "1787334674\n")
-        #expect(PrefixTools.tool(for: prefix, among: tools, runners: runners) == nil)
+        #expect(PrefixTools.tool(for: prefix, among: tools, runners: runners)?.build == Self.release)
 
         try updated(prefix, "1784112240\n")
+        #expect(PrefixTools.tool(for: prefix, among: tools, runners: runners)?.build == Self.release)
+
+        try "\(Self.preview)\nCrossOver Preview (Rosetta)\n".write(
+            to: prefix.root.appending(path: PrefixTools.buildRecordName), atomically: true, encoding: .utf8)
         #expect(PrefixTools.tool(for: prefix, among: tools, runners: runners)?.build == Self.release)
     }
 }

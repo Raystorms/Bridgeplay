@@ -5,8 +5,9 @@ import Foundation
 
 enum ProductVersion {
 
-    // CFBundleShortVersionString: Bridgeplay semver, the same string recorded as the
-    // installed build in Steam.
+    // CFBundleShortVersionString: the label people see, X.Y.Z or, in a beta build,
+    // X.Y.Z-beta.N (stamped at build time, see scripts/stamp-beta.sh). About, Status and
+    // game reports show it; installs and updates are ordered by `build`, never by this.
     static var short: String { AppVersion.display }
 
     // CFBundleVersion: the release counter Sparkle orders updates by.
@@ -14,6 +15,19 @@ enum ProductVersion {
 
     // The NotProton release this build is based on.
     static var upstream: String? { stamped(Bundle.main.object(forInfoDictionaryKey: "NotProtonVersion")) }
+
+    enum Channel: String {
+        case stable, beta
+    }
+
+    // BridgeplayChannel: "beta" in a build stamped by scripts/stamp-beta.sh. A missing,
+    // empty or unreadable value means stable.
+    static var channel: Channel { channel(from: Bundle.main.object(forInfoDictionaryKey: "BridgeplayChannel")) }
+
+    static func channel(from value: Any?) -> Channel {
+        guard let text = value as? String else { return .stable }
+        return Channel(rawValue: text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) ?? .stable
+    }
 
     static var display: String { display(short: short, build: build, upstream: upstream) }
 
@@ -35,23 +49,38 @@ enum ProductVersion {
 @MainActor
 enum AboutPanel {
 
-    // The standard panel already reads "Version 2.0.0 (32)"; the credits line adds the
-    // upstream release.
+    // The standard panel already reads "Version 2.0.0 (32)"; the credits name what
+    // Bridgeplay is built on, point people to CrossOver, which funds Wine, and carry the
+    // GPL-3.0 no-warranty notice. The copyright line comes from Info.plist.
     static func show() {
-        var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
-        if let upstream = ProductVersion.upstream {
-            let centered = NSMutableParagraphStyle()
-            centered.alignment = .center
-            options[.credits] = NSAttributedString(
-                string: "Based on NotProton \(upstream)",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                    .foregroundColor: NSColor.secondaryLabelColor,
-                    .paragraphStyle: centered,
-                ]
-            )
+        let centered = NSMutableParagraphStyle()
+        centered.alignment = .center
+        let base: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: centered,
+        ]
+        let lines: [(text: String, link: String?)] = [
+            (ProductVersion.upstream.map { "Based on NotProton \($0)" } ?? "Based on NotProton",
+             "https://github.com/NotProtonNot/NotProton"),
+            (String(localized: "Runs on CodeWeavers' Wine and Apple's Game Porting Toolkit."), nil),
+            (String(localized: "Support Wine: buy CrossOver"), "https://www.codeweavers.com/crossover"),
+            (String(localized: "Thanks to NotProton's contributors"),
+             "https://github.com/NotProtonNot/NotProton/graphs/contributors"),
+            (String(localized: "Thanks to everyone who contributed on GitHub"),
+             "https://github.com/raymondchins/Bridgeplay/graphs/contributors"),
+            (String(localized: "Free software under the GPL-3.0, with no warranty."), nil),
+            (String(localized: "Read the license"),
+             "https://github.com/raymondchins/Bridgeplay/blob/main/LICENSE"),
+        ]
+        let credits = NSMutableAttributedString()
+        for line in lines {
+            if credits.length > 0 { credits.append(NSAttributedString(string: "\n", attributes: base)) }
+            var attributes = base
+            if let link = line.link { attributes[.link] = URL(string: link) }
+            credits.append(NSAttributedString(string: line.text, attributes: attributes))
         }
-        NSApp.orderFrontStandardAboutPanel(options: options)
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         NSApp.activate()
     }
 }

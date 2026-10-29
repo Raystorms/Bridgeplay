@@ -8,7 +8,7 @@ body:
       value: |
         **Have Bridgeplay? You don't need this form.** After you play, the app asks how the game ran; one tap posts the report, log included, to [Compatibility reports](https://github.com/raymondchins/Bridgeplay/discussions/categories/compatibility-reports) and it counts on the [compatibility list](https://bridgeplay.dev/compatibility). Missed the question? Right-click the game on the Prefixes page and choose **Report This Game…**.
 
-        This form is for anyone reporting without the app. A maintainer checks it and adds the result to the list by hand.
+        This form is for anyone reporting without the app. A maintainer checks it and adds the result to the list by hand. Bridgeplay is a hobby project maintained part-time, so that can take a while, and not every game can be fixed.
 
         Working from a Bridgeplay checkout? Run `scripts/np-test-game.sh <appid> --stop` instead and attach the zipped `compat/runs/<appid>-<timestamp>/` folder.
   - type: input

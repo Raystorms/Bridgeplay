@@ -132,7 +132,7 @@ PINNED = {
     'cc8a9035cea0e26c5d333ef220f1becefc27ae44d2cdcdaea3278e8739d26fd9':
         {'hookRVA': 0x4f880, 'stolen': 'f645b4027529', 'caveRVA': 0x808a0, 'caveSize': 1888,
          'resume': 0x4f886, 'wm': 'ebx', 'load_path': -0x5c,
-         'payload': '0676104e0bd56c4a1e8c473d9cbcd21fb2ba105fc7dc6cf5a70d37692c129e28',
+         'payload': '085df281ffe81c2803f44dd30df885248e5510c8560f0f20a5ae36e8446f7559',
          'exports': {'LdrGetDllHandle': 0x7bc12aa0, 'LdrLoadDll': 0x7bc13640,
                      'NtProtectVirtualMemory': 0x7bc0d7a4, 'NtOpenFile': 0x7bc0d5d4,
                      'NtReadFile': 0x7bc0d304, 'NtClose': 0x7bc0d394}},
@@ -176,6 +176,24 @@ PINNED = {
          'exports': {'LdrGetDllHandle': 0x180043818, 'LdrLoadDll': 0x180041344,
                      'NtProtectVirtualMemory': 0x180066f60, 'NtOpenFile': 0x180066bc0,
                      'NtReadFile': 0x180066620, 'NtClose': 0x180066740}},
+    # WineHQ 11.15 (wine-devel-11.15-osx64.tar.xz)
+    # CEILING: the shipped x86_64 payload is built from detour.c before 160968c (it still jumps
+    # to lsteamclient's DllMain), so build.sh's fresh 832-byte payload (dc4d86de...) differs.
+    # Rebuilding changes WineHQ game behaviour; do it with a WineHQ x86_64 game test.
+    '682181234a55f5b7eed5b2ffa691fbdef1b488734337ef67ea7b5ce17adf43a2':
+        {'hookRVA': 0x3512c, 'stolen': '488b8590000000', 'caveRVA': 0xb3000, 'caveSize': 4096,
+         'resume': 0x35133, 'wm': 'r14', 'load_path': 0x50,
+         'payload': 'd394a6b7f4c55e2bb8b99aeb51cd4555527f8e10fa49339e95a8156486c5e2e5',
+         'exports': {'LdrGetDllHandle': 0x17002fa80, 'LdrLoadDll': 0x17002d4e0,
+                     'NtProtectVirtualMemory': 0x170055944, 'NtOpenFile': 0x1700555a4,
+                     'NtReadFile': 0x170055004, 'NtClose': 0x170055124}},
+    '49396e7ad804a5345b1b968d02fdb6697ddbb7428e61e20e62806c50c37589d1':
+        {'hookRVA': 0x2edcd, 'stolen': '8b4514a802', 'caveRVA': 0x6a075, 'caveSize': 3979,
+         'resume': 0x2edd2, 'wm': 'edi', 'load_path': -0x3c,
+         'payload': '527431a3a74e9dff7bc3582277ddfa7b44bcac6fba285c028fd2c94fd9202418',
+         'exports': {'LdrGetDllHandle': 0x7bc2a670, 'LdrLoadDll': 0x7bc28800,
+                     'NtProtectVirtualMemory': 0x7bc4c874, 'NtOpenFile': 0x7bc4c6a4,
+                     'NtReadFile': 0x7bc4c3d4, 'NtClose': 0x7bc4c464}},
 }
 EXPORTS = ['LdrGetDllHandle', 'LdrLoadDll', 'NtProtectVirtualMemory',
            'NtOpenFile', 'NtReadFile', 'NtClose']

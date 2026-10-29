@@ -13,8 +13,11 @@
 #   scratch/wine-build-arm64         arm64 tree (FEX unix half)
 #   scratch/proton-lsc               Proton tarball for lsteamclient
 #   app/.build                       SwiftPM build and the Sparkle checkout
+# The bridge phase is skipped when scratch/.bridge-key matches the bridge sources.
+# A new worktree: scripts/worktree-seed.sh first, then this.
 #
 # Overridable: DEVELOPER_DIR (default Xcode-beta), JOBS (default hw.ncpu)
+# A beta build: BRIDGEPLAY_BETA=N BRIDGEPLAY_BETA_BUILD=B [BRIDGEPLAY_BETA_PLANNED=X.Y.Z], see docs/RELEASING.md
 
 set -eu
 
@@ -50,6 +53,9 @@ if [ -z "${DEVELOPER_DIR:-}" ] || [ ! -d "$DEVELOPER_DIR" ]; then
 	exit 1
 fi
 export DEVELOPER_DIR
+
+# A malformed beta stamp (BRIDGEPLAY_BETA*, see stamp-beta.sh) fails now, not after the slow phases.
+sh scripts/stamp-beta.sh check
 
 JOBS=${JOBS:-$(sysctl -n hw.ncpu)}
 LOG_DIR=$repo/build/logs
@@ -168,9 +174,24 @@ if [ -f "$wine_stamp" ] && [ "$(cat "$wine_stamp")" != "$wine_key" ]; then
 	echo "    rm -rf scratch/wine scratch/wine-build-dual scratch/wine-build-arm64 $wine_stamp"
 fi
 
-# The wine-tree scripts call plain make, which joins this make's jobserver.
-phase bridge make -j"$JOBS" bridge
-[ -f "$wine_stamp" ] || echo "$wine_key" >"$wine_stamp"
+# Like CI's bridge cache: outputs built from these exact sources are reused, which is how a
+# worktree seeded by worktree-seed.sh skips the Wine clone and build.
+bridge_key=$(sh scripts/bridge-key.sh)
+bridge_stamp=scratch/.bridge-key
+bridge_built=0
+if [ "$(cat "$bridge_stamp" 2>/dev/null)" = "$bridge_key" ]; then
+	bridge_built=1
+	for f in $(sh scripts/bridge-key.sh --outputs); do [ -f "$f" ] || bridge_built=0; done
+fi
+if [ "$bridge_built" -eq 1 ]; then
+	echo "==> [bridge] skipped: already built from these sources ($bridge_key)"
+else
+	rm -f "$bridge_stamp"
+	# The wine-tree scripts call plain make, which joins this make's jobserver.
+	phase bridge make -j"$JOBS" bridge
+	[ -f "$wine_stamp" ] || echo "$wine_key" >"$wine_stamp"
+	echo "$bridge_key" >"$bridge_stamp"
+fi
 
 # --- fonts -------------------------------------------------------------------------
 
@@ -181,6 +202,8 @@ for tool in fontforge gpatch; do
 		|| { echo "==> $tool is missing, run: brew install fontforge gpatch" >&2; exit 1; }
 done
 if [ ! -x scratch/fontvenv/bin/makeotfexe ] || [ "$(cat scratch/fontvenv/.tools 2>/dev/null)" != "$font_tools" ]; then
+	# A venv shared by worktree-seed.sh belongs to the other checkout: replace the link, not that venv.
+	[ ! -L scratch/fontvenv ] || rm scratch/fontvenv
 	python3 -m venv scratch/fontvenv
 	# shellcheck disable=SC2086 # FONT_TOOLS is a space-separated requirement list
 	scratch/fontvenv/bin/pip install -q $font_tools
@@ -207,20 +230,6 @@ sha=$(shasum -a 256 "$zip_out" | cut -d' ' -f1)
 
 # --- checks ------------------------------------------------------------------------
 
-# SwiftPM on Xcode 27 beta (27A5218g) leaves Products/Debug/PackageFrameworks empty
-# and puts Sparkle.framework one level up, while the test bundle's rpath only looks
-# in PackageFrameworks, so the bundle fails to dlopen before a single test runs.
-# Build the tests, then link Sparkle where the rpath expects it. Build products only.
-link_test_sparkle() {
-	swift build --package-path app --build-tests
-	bin=$(swift build --package-path app --show-bin-path)
-	if [ -d "$bin/PackageFrameworks" ] && [ -d "$bin/Sparkle.framework" ] &&
-		[ ! -e "$bin/PackageFrameworks/Sparkle.framework" ]; then
-		ln -s ../Sparkle.framework "$bin/PackageFrameworks/Sparkle.framework"
-		echo "==> linked Sparkle.framework into $bin/PackageFrameworks"
-	fi
-}
-
 # The checks depend on the source, not on the version number, so a tree that already
 # passed (a release right after its bump commit) skips them. Only a clean tree is stamped.
 # BRIDGEPLAY_FORCE_CHECKS=1 runs them anyway.
@@ -237,18 +246,21 @@ if [ "$run_checks" -eq 1 ] && [ -n "$fingerprint" ] && [ "${BRIDGEPLAY_FORCE_CHE
 	checks_reused=1
 fi
 
-# The app workflow runs the same make ci-checks on every push to main, so a release whose
-# sources (version.h aside) match a commit that workflow passed skips them too: push, let
-# CI pass, bump, release. Needs gh; without it, or with no passing run, the checks run here.
+# The app workflow runs the same make ci-checks on every push to main and dev, so a release
+# whose sources (version.h and docs aside) match a commit that workflow passed skips them
+# too: push, let CI pass, bump, release. Needs gh; without it, or with no passing run, the
+# checks run here. A docs-only run is green with its build and checks skipped, so a run
+# counts only when both jobs ran and succeeded (scripts/ci-run-passed.sh).
 ci_slug=${BRIDGEPLAY_CI_REPO:-raymondchins/Bridgeplay}
 ci_passed() {
 	command -v gh >/dev/null 2>&1 || return 1
 	for sha in $(git -C "$repo" rev-list --max-count=5 HEAD); do
-		# app.yml skips pushes that only touch Markdown or docs/, so those don't count either.
-		git -C "$repo" diff --quiet "$sha" HEAD -- . ':(exclude)dylib/version.h' \
-			':(exclude,glob)**/*.md' ':(exclude)docs' || continue
-		gh run list -R "$ci_slug" -w app --commit "$sha" --status success --limit 1 \
-			--json headSha -q '.[].headSha' 2>/dev/null | grep -q . && { echo "$sha"; return 0; }
+		# Only docs (.github/docs-only-paths) and version.h may differ from that commit.
+		# A failing step means "can't tell", never "same".
+		changed=$(git -C "$repo" -c core.quotePath=false diff --name-only --no-renames "$sha" HEAD) || continue
+		code=$(printf '%s\n' "$changed" | sh "$repo/scripts/ci-code-paths.sh") || continue
+		! printf '%s' "$code" | grep -vqx 'dylib/version.h' || continue
+		sh "$repo/scripts/ci-run-passed.sh" "$ci_slug" "$sha" && { echo "$sha"; return 0; }
 	done
 	return 1
 }
@@ -264,10 +276,9 @@ if [ "$run_checks" -eq 1 ]; then
 	check_log=$LOG_DIR/checks.log
 	: >"$check_log"
 	start=$(date +%s)
-	link_test_sparkle >>"$check_log" 2>&1 || true
-	# make ci-checks is the list app.yml runs; each check runs even after a failure
+	# make ci-checks is the list app.yml runs, JOBS checks at a time; each runs even after a failure
 	echo "==> [check] make ci-checks, log: $check_log"
-	if ! make ci-checks >>"$check_log" 2>&1; then
+	if ! make ci-checks CHECK_JOBS="$JOBS" >>"$check_log" 2>&1; then
 		check_failures=$(sed -n 's/^==> ci-checks failed://p' "$check_log")
 		[ -n "$check_failures" ] || check_failures=" ci-checks"
 	fi

@@ -1,4 +1,6 @@
 #include "resolver/anchor.h"
+#include "resolver/resolver.h"
+#include "resolver/sigdb.h"
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <stdio.h>
@@ -142,6 +144,34 @@ static void check_string(const char *label, int hops, int tail, uintptr_t expect
            (unsigned long)expected, (unsigned long)got);
 }
 
+// The whole resolver on the image: a function-entry anchor and a byte pattern that name
+// different entries leave the signature unresolved instead of trusting either one.
+static void check_resolved(const char *label, const char *aob, int32_t offset,
+                           uintptr_t expected) {
+    static np_sig_entry_t sig;
+    memset(&sig, 0, sizeof(sig));
+    strcpy(sig.name, "Fixture::Entry");
+    strcpy(sig.module, "fixture.dylib");
+    strcpy(sig.aob_hex, aob);
+    sig.match_offset = offset;
+    sig.anchor = (np_anchor_t){.kind = NP_MATCH_CALLS, .call_count = 2,
+                               .calls_exact = 1, .no_data_refs = 1};
+    strcpy(sig.anchor.calls[0], "_first");
+    strcpy(sig.anchor.calls[1], "_second");
+    np_sigdb_t db = {.signatures = &sig, .sig_count = 1};
+    np_resolve_result_t res = {0};
+    uintptr_t base = (uintptr_t)image;
+    np_resolve_signatures((void *)image, (intptr_t)base, &db, "fixture.dylib", &res);
+    uintptr_t got = np_lookup_address(&res, "Fixture::Entry");
+    np_free_resolution(&res);
+    if (got) got -= base;
+    cases++;
+    if (got == expected) return;
+    failures++;
+    printf("FAIL %s: expected 0x%lx, got 0x%lx\n", label,
+           (unsigned long)expected, (unsigned long)got);
+}
+
 int main(void) {
     reset();
     check("exact match spanning more than 0x400 bytes", 1, 0x400);
@@ -263,6 +293,13 @@ int main(void) {
     needle_ref_at(0x910);
     call(0x990, 0x900);
     check_string("caller in the unbounded last function", 1, 0, 0);
+
+    reset();
+    check_resolved("anchor without a byte pattern", "", 0, 0x400);
+    check_resolved("anchor and byte pattern agree", "F8040094FA040094", 0x20, 0x400);
+    word(0x884, 0xAABBCCDD);
+    check_resolved("anchor and byte pattern name different entries",
+                   "FF4300D1DDCCBBAA", 0, 0);
 
     if (failures) {
         printf("%d of %d anchor cases failed\n", failures, cases);

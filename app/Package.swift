@@ -22,11 +22,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "BridgeplayApp",
-            dependencies: [.product(name: "Sparkle", package: "Sparkle")],
+            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "BridgeplayUI", "BridgeplayInstallerCore"],
             path: "Sources/BridgeplayApp",
             resources: (hasPayload ? [.copy("Resources/payload")] : []) + [
                 .process("Resources/Localization"),
-                .copy("Resources/Fonts"),
                 .copy("Resources/payload.manifest"),
                 .copy("Resources/valve-packages.manifest"),
                 .copy("Resources/detour2.bin"),
@@ -54,12 +53,18 @@ let package = Package(
                 .copy("Resources/winebus-winecx-11.17.so"),
                 .copy("Resources/winebus-winecx-11.17.sys"),
                 .copy("Resources/ws2_32-winecx-11.17.dll"),
+                .copy("Resources/kernel32-winecx-11.17.dll"),
+                .copy("Resources/kernelbase-winecx-11.17.dll"),
                 .copy("Resources/crypt32-winecx-11.17.dll"),
                 .copy("Resources/wintrust-winecx-11.17.dll"),
                 .copy("Resources/nvapi64-shim.dll"),
                 .copy("Resources/win32u-winecx-11.17.so"),
                 .copy("Resources/wined3d-winecx-11.17.dll"),
                 .copy("Resources/winecoreaudio-winecx-11.17.so"),
+                .copy("Resources/d3dx11_43-winecx-11.17.dll"),
+                .copy("Resources/d3dx11_43-winecx-11.17-i386.dll"),
+                .copy("Resources/d3dx11_42-winecx-11.17.dll"),
+                .copy("Resources/d3dx11_42-winecx-11.17-i386.dll"),
                 .copy("Resources/libSDL2-2.0.0.dylib"),
                 .copy("Resources/detour2-41073.bin"),
                 .copy("Resources/detour32-41073.bin"),
@@ -75,5 +80,29 @@ let package = Package(
             dependencies: ["BridgeplayApp"],
             path: testsPath
         ),
-    ] : [])
+    ] : []) + [
+        .target(
+            name: "BridgeplayUI",
+            path: "Sources/BridgeplayUI",
+            resources: [.copy("Resources/Fonts")],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .target(
+            name: "BridgeplayInstallerCore",
+            path: "Sources/BridgeplayInstallerCore",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .executableTarget(
+            name: "BridgeplayInstaller",
+            dependencies: ["BridgeplayUI", "BridgeplayInstallerCore"],
+            path: "Sources/BridgeplayInstaller",
+            resources: [.process("Resources/Localization")],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "BridgeplayInstallerCoreTests",
+            dependencies: ["BridgeplayInstallerCore"],
+            path: "Tests/BridgeplayInstallerCoreTests"
+        ),
+    ]
 )

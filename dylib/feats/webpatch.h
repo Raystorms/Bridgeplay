@@ -1,4 +1,4 @@
-// Enables Steam Play in the UI/enables the Compatibility tab in game properties
+// Enables Steam Play in the UI, and shows the game properties Compatibility tab as Bridgeplay
 #ifndef NOTPROTON_FEATS_WEBPATCH_H
 #define NOTPROTON_FEATS_WEBPATCH_H
 

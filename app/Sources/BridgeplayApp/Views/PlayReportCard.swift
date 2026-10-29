@@ -1,11 +1,13 @@
 import SwiftUI
+import BridgeplayUI
 
 // Asks how the last game session ran. Smooth sends at once; Has Issues and Didn't Run first
-// offer an optional note on what went wrong.
+// offer an optional note on what went wrong, and Has Issues an optional main problem.
 struct PlayReportCard: View {
     let nudge: PlayReports.Nudge
     @State private var pending: ReportStatus?
     @State private var note = ""
+    @State private var issue: ReportIssue?
     private var reports: PlayReports { .shared }
 
     var body: some View {
@@ -19,6 +21,7 @@ struct PlayReportCard: View {
         .onChange(of: nudge.id) {
             pending = nil
             note = ""
+            issue = nil
         }
     }
 
@@ -29,21 +32,46 @@ struct PlayReportCard: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text("What went wrong? Optional, and public with the report.").font(BP.sans(13, .semibold))
-                TextField("For example: no sound, crashes when a level loads", text: $note)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { send(status) }
+                HStack(spacing: 8) {
+                    if status == .bronze {
+                        Picker("Main problem", selection: $issue) {
+                            Text("Main problem").tag(ReportIssue?.none)
+                            ForEach(ReportIssue.allCases, id: \.self) { Text(Self.label($0)).tag(Optional($0)) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    TextField("For example: no sound, crashes when a level loads", text: $note)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { send(status) }
+                }
             }
             Spacer(minLength: 12)
-            Button("Back") { pending = nil }
+            Button("Back") {
+                pending = nil
+                issue = nil
+            }
             Button("Send") { send(status) }
                 .buttonStyle(.borderedProminent)
         }
     }
 
     private func send(_ status: ReportStatus) {
-        reports.answer(status, note: note)
+        reports.answer(status, note: note, issue: issue)
         pending = nil
         note = ""
+        issue = nil
+    }
+
+    static func label(_ issue: ReportIssue) -> String {
+        switch issue {
+        case .performance: String(localized: "Low frame rate or stutter")
+        case .crash: String(localized: "Crashes or freezes")
+        case .graphics: String(localized: "Graphics glitches")
+        case .sound: String(localized: "Sound problems")
+        case .controls: String(localized: "Controller, keyboard or mouse")
+        case .launcher: String(localized: "Launcher, sign-in or anti-cheat")
+        }
     }
 
     private var answerRow: some View {
@@ -120,7 +148,7 @@ struct PlayReportConsent: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Share how your games run?")
                 .font(BP.sans(17, .semibold))
-            Text("Reports are posted publicly in Bridgeplay's GitHub Discussions and counted on the compatibility list. Each one has the game, how it ran, anything you write about it, your Mac's chip, memory and displays, the macOS and Bridgeplay versions, the engine and backend, and the game's logs. Your home folder, user and computer names, Steam account name, Steam ID and email addresses are removed from the logs first. You don't need a GitHub account.")
+            Text("Reports are posted publicly in Bridgeplay's GitHub Discussions and counted on the compatibility list. Each one has the game, how it ran, anything you write about it, your Mac's model, chip, GPU cores, memory and displays, whether it was on battery, in Low Power Mode or running hot, the macOS and Bridgeplay versions, the engine, backend and High Resolution setting, and the game's logs. Your home folder, user and computer names, Steam account name, Steam ID and email addresses are removed from the logs first. You don't need a GitHub account. It also sends a random install ID, used only for rate limits. The server sees your IP, like any website.")
                 .foregroundStyle(BP.fg2)
                 .fixedSize(horizontal: false, vertical: true)
             if reports.consentRequest != .autoShare {

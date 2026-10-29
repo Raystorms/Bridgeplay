@@ -14,8 +14,9 @@
 #
 # The update is signed with the EdDSA key in this Mac's login keychain, created once with
 # app/.build/artifacts/sparkle/Sparkle/bin/generate_keys; app/Info.plist's SUPublicEDKey
-# must be its public half. The app is code signed with BRIDGEPLAY_SIGN_IDENTITY (default
-# "Bridgeplay Release", a self-signed identity in the login keychain). The version comes
+# must be its public half. The app is code signed with BRIDGEPLAY_SIGN_IDENTITY (default the
+# maintainer's Developer ID in the login keychain) and notarized with the notarytool profile
+# BRIDGEPLAY_NOTARY_PROFILE (default "bridgeplay-notary"). The version comes
 # from dylib/version.h (scripts/bump-version.sh) and must not have been released yet.
 # HEAD must already be pushed to the Bridgeplay repository's main.
 
@@ -115,20 +116,42 @@ if [ -z "$notes" ]; then
 	[ -n "$notes" ] || notes="Bridgeplay $version"
 fi
 
+# The app downloads its CJK fonts from the release CJKFonts.swift pins (scripts/package-fonts.sh
+# --publish); a release without it would leave new installs without them.
+fonts_archive=$(sed -n 's/.*static let archive = "\(fonts-cjk-[0-9a-f]*\.tar\.xz\)".*/\1/p' app/Sources/BridgeplayApp/Model/CJKFonts.swift)
+[ -n "$fonts_archive" ] || die "no fonts archive pinned in CJKFonts.swift"
+fonts_tag=${fonts_archive%.tar.xz}
+gh release view "$fonts_tag" -R "$slug" --json assets -q '.assets[].name' 2>/dev/null | grep -qx "$fonts_archive" \
+	|| check "$fonts_tag has no $fonts_archive on GitHub; run scripts/package-fonts.sh --publish"
+
 sparkle=app/.build/artifacts/sparkle/Sparkle/bin
 [ -x "$sparkle/generate_appcast" ] || swift build --package-path app >/dev/null
 [ -x "$sparkle/generate_appcast" ] || die "no Sparkle tools at $sparkle"
 
-# The app is signed with a stable self-signed identity, so its designated requirement (and
-# the macOS permissions keyed to it, such as App Management) stays the same across updates.
-# An ad hoc signature is the cdhash, new with every build. See docs/RELEASING.md (Signing).
-sign_identity=${BRIDGEPLAY_SIGN_IDENTITY:-Bridgeplay Release}
-[ "$sign_identity" != "-" ] || check "BRIDGEPLAY_SIGN_IDENTITY is ad hoc (-); a release needs the stable identity"
-if [ "$dry_run" -eq 0 ] && ! security find-identity -p codesigning | grep -Fq "\"$sign_identity\""; then
-	die "no code signing identity \"$sign_identity\" in the keychain; create it once (docs/RELEASING.md, Signing)"
+# The app is signed with the maintainer's Developer ID, so its designated requirement (and
+# the macOS permissions keyed to it, such as App Management) stays the same across updates,
+# and notarized, so Gatekeeper opens a downloaded copy without Open Anyway. An ad hoc
+# signature is the cdhash, new with every build. See docs/RELEASING.md (Signing).
+team_id=AF38EA29BA
+sign_identity=${BRIDGEPLAY_SIGN_IDENTITY:-Developer ID Application: Raymond Chin ($team_id)}
+case "$sign_identity" in
+	"Developer ID Application: "*"($team_id)") ;;
+	*) check "BRIDGEPLAY_SIGN_IDENTITY \"$sign_identity\" is not the Developer ID of team $team_id; Apple notarizes only that" ;;
+esac
+if [ "$dry_run" -eq 0 ] && ! security find-identity -v -p codesigning | grep -Fq "\"$sign_identity\""; then
+	die "no valid code signing identity \"$sign_identity\" in the keychain; install it once (docs/RELEASING.md, Signing)"
 fi
 BRIDGEPLAY_SIGN_IDENTITY=$sign_identity
 export BRIDGEPLAY_SIGN_IDENTITY
+notary_profile=${BRIDGEPLAY_NOTARY_PROFILE:-bridgeplay-notary}
+BRIDGEPLAY_NOTARY_PROFILE=$notary_profile
+export BRIDGEPLAY_NOTARY_PROFILE
+if [ "$dry_run" -eq 0 ]; then
+	# history makes one authenticated call, so a missing or revoked profile stops here, not
+	# after the build.
+	xcrun notarytool history --keychain-profile "$notary_profile" >/dev/null 2>&1 \
+		|| die "notarytool profile \"$notary_profile\" missing or rejected; xcrun notarytool store-credentials $notary_profile --apple-id <id> --team-id $team_id"
+fi
 
 if [ "$dry_run" -eq 1 ]; then
 	out=out/release
@@ -182,9 +205,11 @@ codesign --verify --strict --deep "$app" || die "$app is not validly signed; Spa
 requirement=$(codesign -d -r- "$app" 2>&1 | sed -n 's/^#* *designated => //p')
 echo "==> designated requirement: $requirement"
 case "$requirement" in
-	'identifier "com.bridgeplay.Bridgeplay" and certificate '*' = H"'*'"') ;;
-	*) check "$app is not signed with a certificate (ad hoc?), so macOS would forget its permissions on update" ;;
+	'identifier "com.bridgeplay.Bridgeplay" and anchor apple generic and '*"certificate leaf[subject.OU] = $team_id") ;;
+	*) check "$app is not signed with the Developer ID of team $team_id, so macOS would forget its permissions on update" ;;
 esac
+codesign -d --verbose=1 "$app" 2>&1 | grep -q 'flags=.*runtime' || check "$app does not have the hardened runtime"
+codesign -dvv "$app" 2>&1 | grep -q '^Timestamp=' || check "$app has no secure timestamp"
 codesign -dvv "$app" 2>&1 | grep -Fqx "Authority=$sign_identity" \
 	|| check "$app is not signed by \"$sign_identity\""
 # The helpers in the payload (Makefile PAYLOAD_SIGN_IDS) carry the same identity.
@@ -198,6 +223,20 @@ while IFS= read -r helper; do
 done <"$machos"
 echo "==> payload: checked $(wc -l <"$machos" | tr -d ' ') helpers for \"$sign_identity\""
 rm -f "$machos"
+
+# Apple rejects the whole app for one Mach-O file without the Developer ID or a timestamp.
+unsigned=$(find "$app" -type f -exec sh -c 'file -b "$1" | grep -q "^Mach-O" || exit 0
+	info=$(codesign -dvv "$1" 2>&1)
+	printf "%s\n" "$info" | grep -Fqx "Authority=$2" && printf "%s\n" "$info" | grep -q "^Timestamp=" || echo "$1"' \
+	sh {} "$sign_identity" \;)
+[ -z "$unsigned" ] || check "not signed with \"$sign_identity\" and a timestamp, so notarization would fail: $(printf '%s\n' "$unsigned" | sed "s#^$app/##" | tr '\n' ' ')"
+
+# Notarize before the archives are made, so the stapled ticket is inside every zip.
+if [ "$dry_run" -eq 1 ]; then
+	echo "==> dry run: would notarize and staple $app (profile $notary_profile)"
+else
+	scripts/notarize.sh "$app"
+fi
 
 # One archive and one appcast per feed. The appcast attached to the latest release is the
 # feed, so each only needs the newest item; its enclosure points at this tag's zip.
@@ -238,11 +277,27 @@ feed "$out/bridgeplay" Bridgeplay.zip Bridgeplay.app "$slug"
 # installs over /Applications/NotProton.app; later updates match by bundle identifier.
 [ "$legacy" -eq 0 ] || feed "$out/legacy" NotProton.zip NotProton.app "$legacy_slug"
 
+# Add the bootstrap after appcast generation so Sparkle only indexes the product archive.
+if [ "$dry_run" -eq 1 ]; then
+    BRIDGEPLAY_SIGN_IDENTITY=- scripts/package-native-installer.sh
+else
+    scripts/package-native-installer.sh
+fi
+cp out/Bridgeplay-Setup.zip "$out/bridgeplay/Bridgeplay-Setup.zip"
+# The download bridgeplay.dev links to: the app in a disk image people drag to Applications.
+# Notarized and stapled on its own; a dry run builds it unsigned.
+if [ "$dry_run" -eq 1 ]; then
+	BRIDGEPLAY_SIGN_IDENTITY=- scripts/package-dmg.sh "$app" "$out/bridgeplay/Bridgeplay.dmg"
+else
+	scripts/package-dmg.sh "$app" "$out/bridgeplay/Bridgeplay.dmg"
+fi
+
 title="Bridgeplay $version"
 body=$(printf '%s\n\nBuild %s, based on NotProton %s.\n' "$notes" "$build" "$upstream")
 echo "==> $title (build $build), notes since ${previous:-the beginning}:"
 printf '%s\n' "$notes" | sed 's/^/    /'
 run gh release create "$tag" "$out/bridgeplay/Bridgeplay.zip" "$out/bridgeplay/appcast.xml" \
+    "$out/bridgeplay/Bridgeplay-Setup.zip" "$out/bridgeplay/Bridgeplay.dmg" \
 	-R "$slug" --target "$(git rev-parse HEAD)" --title "$title" --notes "$body" --latest
 if [ "$legacy" -eq 1 ]; then
 	# Only a carrier for the feed: the tag goes on that repository's default branch, since
@@ -256,6 +311,26 @@ fi
 # the Latest release, published just above), so it is uploaded only when its fingerprint,
 # every file it ships, differs from the one on that release.
 installer_tag=installer
+# Replace one asset of an existing release with a gap of about a second. --clobber deletes
+# the old asset before uploading the new one, and installers got 404s for the two minutes
+# the 500 MB zip took (#166). So: upload under a temporary name, delete, rename.
+swap_asset() {
+	swap_tag=$1
+	name=$(basename "$2")
+	staged="$(dirname "$2")/next-$name"
+	# A dry run writes no .sig.
+	[ "$dry_run" -eq 1 ] && { run gh release upload "$swap_tag" "$staged" -R "$slug"; return 0; }
+	cp "$2" "$staged"
+	# A swap interrupted earlier leaves next-<name> behind.
+	gh release delete-asset "$swap_tag" "next-$name" -R "$slug" -y >/dev/null 2>&1 || true
+	gh release upload "$swap_tag" "$staged" -R "$slug"
+	id=$(gh api "repos/$slug/releases/tags/$swap_tag" --jq ".assets[] | select(.name == \"next-$name\") | .id") \
+		&& [ -n "$id" ] || die "uploaded next-$name is missing from the $swap_tag release"
+	gh release delete-asset "$swap_tag" "$name" -R "$slug" -y >/dev/null 2>&1 || true
+	gh api -X PATCH "repos/$slug/releases/assets/$id" -f name="$name" >/dev/null \
+		|| die "could not rename next-$name to $name on the $swap_tag release; rename it on GitHub now"
+	rm -f "$staged"
+}
 installer_fp=$(scripts/package-installer.sh --fingerprint-only | tail -n 1)
 published_fp=$(gh release view "$installer_tag" -R "$slug" --json body -q .body 2>/dev/null \
 	| sed -n 's/^Fingerprint: //p' || true)
@@ -264,12 +339,26 @@ if [ -n "$installer_fp" ] && [ "$installer_fp" = "$published_fp" ]; then
 else
 	scripts/package-installer.sh
 	mv out/Bridgeplay-Installer.zip "$out/bridgeplay/Bridgeplay-Installer.zip"
+	# Bridgeplay Installer.app downloads this zip for GPTK, the engine and the configs and
+	# checks it against "<EdDSA signature> <length>" in the .sig beside it (InstallerComponents).
+	# A dry run doesn't read the keychain, so it writes no signature.
+	if [ "$dry_run" -eq 0 ]; then
+		installer_signed=$("$sparkle/sign_update" "$out/bridgeplay/Bridgeplay-Installer.zip") \
+			|| die "could not sign the installer zip"
+		installer_sig=$(printf '%s\n' "$installer_signed" | sed -nE 's/.*edSignature="([^"]+)".*length="([0-9]+)".*/\1 \2/p')
+		[ -n "$installer_sig" ] || die "sign_update printed no signature for the installer zip"
+		printf '%s\n' "$installer_sig" >"$out/bridgeplay/Bridgeplay-Installer.zip.sig"
+	fi
 	installer_body=$(printf 'The one-click installer behind bridgeplay.dev/download. It downloads the latest Bridgeplay when it runs.\n\nFingerprint: %s\n' "$installer_fp")
 	if gh release view "$installer_tag" -R "$slug" >/dev/null 2>&1; then
-		run gh release upload "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip" -R "$slug" --clobber
+		# The zip first, then its .sig: an installer that reads the new .sig before the new
+		# zip is in place fails its check and retries (InstallerComponents).
+		swap_asset "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip"
+		swap_asset "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip.sig"
 		run gh release edit "$installer_tag" -R "$slug" --notes "$installer_body"
 	else
-		run gh release create "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip" -R "$slug" \
+		run gh release create "$installer_tag" "$out/bridgeplay/Bridgeplay-Installer.zip" \
+			"$out/bridgeplay/Bridgeplay-Installer.zip.sig" -R "$slug" \
 			--target "$(git rev-parse HEAD)" --title "Bridgeplay Installer" --notes "$installer_body" \
 			--prerelease --latest=false
 	fi

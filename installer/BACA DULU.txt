@@ -3,7 +3,8 @@ Cara pasang Bridgeplay
 Butuh:
 - Mac Apple Silicon (M1 atau lebih baru) dengan macOS 26 atau lebih baru.
 - Akun admin Mac (installer menulis ke folder Applications).
-- Internet (untuk Rosetta dan Steam).
+- Internet (installer mengunduh Bridgeplay dan, kalau perlu, Steam; setup
+  mengunduh Rosetta dan engine WineCX, sekitar 440 MB).
 
 1. Klik dua kali "Install.command". macOS akan memblokirnya karena belum
    ditandatangani Apple. Klik Done.
@@ -16,13 +17,15 @@ Butuh:
    - Your Mac: klik Install di Rosetta kalau diminta (minta password Mac).
    - Graphics: sudah otomatis, klik Continue.
    - Steam: login ke akun Steam kamu.
-   - Set Up: klik Set Up. Kalau diminta izin App Management, nyalakan
-     Bridgeplay di jendela Settings yang terbuka. Setup lanjut sendiri.
+   - Set Up: klik Set Up. Setup mengunduh engine WineCX. Kalau diminta izin
+     App Management, nyalakan Bridgeplay di jendela Settings yang terbuka.
+     Setup lanjut sendiri.
 5. Klik Open Steam, pilih game Windows, Install, Play.
 
-Update dari Bridgeplay 2.x: saat pertama dibuka, 3.0.0 memindahkan file-nya dari
-folder lama "notproton" ke "bridgeplay" dan menyimpan backup. Tutup Steam dan
-game dulu; Bridgeplay menunggu sampai keduanya tertutup.
+Update dari NotProton atau Bridgeplay lama yang masih memakai folder
+"notproton": saat pertama dibuka, Bridgeplay memindahkan file-nya dari folder
+itu ke "bridgeplay" dan menyimpan backup. Tutup Steam dan game dulu; Bridgeplay
+menunggu sampai keduanya tertutup.
 
 Controller: pertama kali controller dipakai, Steam minta izin Input
 Monitoring. Klik Allow (atau nyalakan Steam di System Settings > Privacy &
@@ -32,3 +35,5 @@ Lisensi: Bridgeplay gratis dan non-komersial, berlisensi GPL-3.0 (lihat
 LICENSE dan NOTICE). Installer ini menyertakan redistributable Game Porting
 Toolkit milik Apple (folder gptk) di bawah lisensi Apple, yang hanya
 mengizinkan distribusi non-komersial. Lisensinya ada di GPTK-License.rtf.
+DXMT dan DXVK (folder cache) memakai lisensinya sendiri, ada di file LICENSE.*
+dan COPYING.LIB.dxmt di sini.

@@ -1,9 +1,14 @@
 # Releasing Bridgeplay
 
-Every release is a GitHub release of `raymondchins/Bridgeplay` carrying `Bridgeplay.zip` and
-`appcast.xml`. The one-click `Bridgeplay-Installer.zip` lives on its own prerelease, tag
-`installer` (bridgeplay.dev/download redirects to
-`releases/download/installer/Bridgeplay-Installer.zip`). It carries no app: `Install.command`
+Every release is a GitHub release of `raymondchins/Bridgeplay` carrying `Bridgeplay.zip`
+(the Sparkle update), `appcast.xml`, `Bridgeplay.dmg` (the download bridgeplay.dev links to:
+the app in a disk image with an Applications link, built by `scripts/package-dmg.sh` after
+the appcast so Sparkle never indexes it) and the small native installer,
+`Bridgeplay-Setup.zip`. All three are notarized, so macOS only asks once whether to open
+them. The native installer also downloads the `installer`
+release's `Bridgeplay-Installer.zip` for GPTK, the engine and the configs, checked against
+the `Bridgeplay-Installer.zip.sig` that `release-local.sh` signs and uploads beside it. The one-click `Bridgeplay-Installer.zip` lives on its own prerelease, tag
+`installer`. It carries no app: `Install.command`
 downloads the Latest release's `Bridgeplay.zip` when it runs, so `release-local.sh` uploads
 the installer again only when its fingerprint (every file it ships) changes, which is when
 the engines, GPTK, the configs or the installer itself change. A release whose sources
@@ -39,26 +44,77 @@ record holds `4.0.<build>` (`AppVersion.deployKey`), not the semver: it sorts pa
 older record (`1.2.0-…`, `3.5.0`), and an older app that another macOS user still runs sees
 a newer install and leaves it alone. `VersioningTests` guards both.
 
+## Betas
+
+The committed `BRIDGEPLAY_VERSION` is always a plain `X.Y.Z`, on `main` and on `dev`, so merging
+`main` into `dev` never conflicts over a version. A beta's label, build number and channel are
+stamped into the app at build time by `scripts/stamp-beta.sh` and never committed;
+`bump-version.sh`, `stamp-beta.sh` and `make app` refuse a beta label in `dylib/version.h`.
+
+```sh
+BRIDGEPLAY_BETA=1 BRIDGEPLAY_BETA_BUILD=46 scripts/build-local.sh        # or make app
+BRIDGEPLAY_BETA=2 BRIDGEPLAY_BETA_BUILD=47 BRIDGEPLAY_BETA_PLANNED=0.8.0 make app
+```
+
+| Variable | Meaning |
+|---|---|
+| `BRIDGEPLAY_BETA` | The beta number N, a positive integer. Setting it at all asks for a beta; anything but a positive integer fails the build, and so does setting the two below without it |
+| `BRIDGEPLAY_BETA_BUILD` | The build number: the highest build ever published, stable or beta, plus one. Required, and above the committed build, so the beta orders above the stable it branched from |
+| `BRIDGEPLAY_BETA_PLANNED` | The release the beta is named after. Defaults to the next patch of the committed version; name a milestone minor (`0.8.0`) to override it. Must be above the committed version |
+
+A beta built from committed `0.7.2` therefore reads `0.7.3-beta.1` by default (`CFBundleShortVersionString`,
+shown in About, Status and game reports), carries the build it was given (`CFBundleVersion`) and
+`BridgeplayChannel` `beta` in `Info.plist`; a normal build keeps the committed version and build and
+the `stable` channel `app/Info.plist` ships with. A missing or unreadable channel means stable.
+Installs and updates are ordered by the build alone, never by the label (`AppVersion.deployKey`),
+which is why every published build, prerelease or not, must take a higher number than all before it.
+
+The stable that ships the beta is bumped as the version policy says, usually a patch, to the number
+the beta was named after, and takes the highest published build into account so it outranks every beta:
+
+```sh
+scripts/bump-version.sh patch --named 0.7.3 --highest-build 47    # minor --named 0.8.0 for a milestone
+```
+
+`--named` fails the bump when it would land anywhere else, and `BRIDGEPLAY_HIGHEST_BUILD` can stand in
+for `--highest-build`. Without it the bump only knows the committed build, so give it the real maximum.
+
+Betas are built from `dev`, and upstream merges go there: `scripts/sync-upstream.sh` merges and
+commits no version bump on it (`BRIDGEPLAY_BETA_BRANCH` names the branch, default `dev`). On `main`, the exception for a security or
+crash hotfix from upstream, it still bumps the patch.
+
+`release-local.sh` does not publish betas: a stamped build no longer matches `dylib/version.h`, so
+its version check stops it. `make versioncheck` covers the stamp, the bump and the sync.
+
 ## Steps
 
 0. Push the changes first and wait for the `app` workflow to pass on them
    (`gh run watch -R raymondchins/Bridgeplay`, about 10 minutes, free on this public repo).
-   The release then reuses that result instead of running the checks again here.
+   The release then reuses that result instead of running the checks again here. A docs-only run
+   (the gate green, build and checks skipped) does not count; the release falls back to an older run
+   of the same sources or runs the checks here.
 1. Bump and commit:
    ```sh
-   scripts/bump-version.sh patch        # or minor / major
+   scripts/bump-version.sh patch        # or minor / major, or set X.Y.Z
    git commit -m "chore(release): Bridgeplay X.Y.Z" dylib/version.h
    ```
-   `scripts/sync-upstream.sh` already bumps the patch after an upstream merge.
+   `set X.Y.Z` takes any version above the committed one, such as `0.7.31` after `0.7.3` for a
+   small follow-up. The numbers compare as integers, so `0.7.31` sorts above `0.7.4`: after it,
+   go on with `0.7.32` (or `patch`) or a minor. Updates still order by the build, which goes up by one.
+   `scripts/sync-upstream.sh` already bumps the patch after an upstream merge on `main`; on `dev` it
+   commits no bump, see Betas.
 2. Push to `main` of `raymondchins/Bridgeplay` (the script refuses anything else).
-3. Optionally rehearse: `scripts/release-local.sh --dry-run` writes the zip and appcast to
+3. Optionally rehearse: `scripts/release-local.sh --dry-run` writes the zip, appcast and
+   an ad hoc native installer ZIP to
    `out/release/` from an app already built with `make app`, without publishing or reading
    the keychain.
 4. Release: `scripts/release-local.sh` (notes default to the commit subjects since the
    previous `vX.Y.Z` release; pass a string to override). It builds with
-   `scripts/build-local.sh --checks`, signs the app with the `Bridgeplay Release` identity
-   (see Signing), signs the zip with the EdDSA key in the login keychain, writes an appcast with `minimumSystemVersion` 26.0, packages the installer from the
-   same app (`scripts/package-installer.sh`) and publishes `vX.Y.Z` as Latest with all three.
+   `scripts/build-local.sh --checks`, signs the app with the maintainer's Developer ID and
+   notarizes it (see Signing), signs the zip with the EdDSA key in the login keychain, writes an appcast with `minimumSystemVersion` 26.0, packages the installer from the
+   same app (`scripts/package-installer.sh`). It also builds the native installer ZIP with the same
+   Developer ID, notarized, and attaches it beside the product ZIP and appcast on `vX.Y.Z` Latest.
+   The existing bundled installer ZIP remains on the separate `installer` tag.
 
 Any other release in the repository (a DXMT build, say) must be created with
 `--latest=false`, or the feed URL stops serving `appcast.xml` until the next app release.
@@ -85,34 +141,46 @@ Two signatures, for different things:
   designated requirement is what macOS keys permissions to (App Management, which lets
   Bridgeplay patch Steam.app). An ad hoc signature's requirement is the cdhash, which is new
   with every build, so macOS treats each update as a different app: the toggle in System
-  Settings still looks on, but no longer applies. Releases are therefore signed with a
-  stable self-signed identity, and the requirement becomes
-  `identifier "com.bridgeplay.Bridgeplay" and certificate leaf = H"<sha1>"`, the same for
-  every build signed with that certificate.
+  Settings still looks on, but no longer applies. Releases are therefore signed with the
+  maintainer's Developer ID (Team `AF38EA29BA`), and the requirement becomes
+  `identifier "com.bridgeplay.Bridgeplay" and anchor apple generic and … certificate
+  leaf[subject.OU] = AF38EA29BA`, the same for every build and every renewed certificate of
+  that team.
+- **Notarization** lets Gatekeeper open a downloaded copy without Open Anyway. Apple scans
+  the signed app; `scripts/notarize.sh` submits it with `notarytool`, staples the ticket and
+  checks that `spctl` reports `Notarized Developer ID`. It needs the hardened runtime and a
+  secure timestamp on every Mach-O file, which only a Developer ID gets.
 
 `make app` signs with `APP_SIGN_ID`, which defaults to `$BRIDGEPLAY_SIGN_IDENTITY` and
 then to ad hoc (`-`), so any checkout still builds. Everything inside is signed with the
 same identity first, inside out: Sparkle's helpers (`Autoupdate`, `Updater.app`, its XPC
 services) and every Mach-O file in the payload, each under the explicit identifier
 `PAYLOAD_SIGN_IDS` in the Makefile gives it. `make app` stops if the payload holds a Mach-O
-file that list does not name, so a new helper needs an entry there. There is no hardened
-runtime: library validation needs a Team ID, which a self-signed certificate does not have. `scripts/release-local.sh` uses `BRIDGEPLAY_SIGN_IDENTITY` (default
-`Bridgeplay Release`), refuses ad hoc, stops if the identity is not in the keychain, prints
-the designated requirement and stops unless it is the certificate form signed by that
-identity. Changing the identity or its certificate, or marking it trusted (which can turn
-`certificate leaf` into `certificate root`), changes the requirement, and every user has to
-grant App Management once more. The first release signed this way does that once as well,
-coming from ad hoc.
+file that list does not name, so a new helper needs an entry there. With a Developer ID
+(`APP_SIGN_FLAGS` in the Makefile) every signature gets `--options runtime --timestamp`;
+ad hoc and self-signed builds get neither, since library validation needs a Team ID. A
+Developer ID build also re-signs the Wine binaries and libSDL2 in `Resources/`, which are
+committed ad hoc and pinned; `SignedPin.swift` keeps their pins valid (see
+[WINECX.md](WINECX.md), Shipped binaries). `release-local.sh` stops before notarizing if any
+Mach-O file in the app lacks the Developer ID or a timestamp. The app
+needs no entitlements: it sends no Apple Events (the Rosetta prompt's `do shell script` runs
+inside `osascript`) and loads only its own and Apple's code. `scripts/release-local.sh` uses
+`BRIDGEPLAY_SIGN_IDENTITY` (default `Developer ID Application: Raymond Chin (AF38EA29BA)`)
+and the notarytool profile `BRIDGEPLAY_NOTARY_PROFILE` (default `bridgeplay-notary`), stops
+before building if either is missing, checks the designated requirement, the hardened runtime
+and the timestamp, then notarizes and staples the app before zipping it. Sparkle accepts the
+change of certificate because the EdDSA key stays the same (`SUUpdateValidator`). Changing
+the team changes the requirement, and every user has to grant App Management once more; the
+first Developer ID release, coming from `Bridgeplay Release`, does that once as well.
+`installer/Install.command` accepts either signer, so an older installer zip keeps working.
 
 ### The payload helpers
 
 | Payload file | Identifier | Runs as |
 |---|---|---|
 | `notproton.dylib` | `com.bridgeplay.notproton` | inside Steam; the app re-signs Steam's copy with the local identity below |
-| `overlay-shim.dylib`, `game-host.dylib` | `com.bridgeplay.overlay-shim`, `com.notproton.game-host` | inserted into the game's Wine loader |
-| `controllers/dualsense/bridge.dylib`, `controllers/steam-input/rumble.dylib` | `com.notproton.dualsense.bridge`, `com.notproton.steam-input.rumble` | inserted into the game's Wine loader |
-| `controllers/dualsense/launch`, `controllers/dualsense/broker` | `com.notproton.dualsense.launch`, `com.notproton.dualsense.broker` | child processes of the run script |
-| `iconmaker`, `appinfo`, `prepare-game-loader` | `com.bridgeplay.iconmaker`, `com.bridgeplay.appinfo`, `com.notproton.game-metadata` | command-line tools the run script calls |
+| `overlay-shim.dylib` | `com.bridgeplay.overlay-shim` | inserted into the game's Wine loader |
+| `iconmaker`, `appinfo` | `com.bridgeplay.iconmaker`, `com.bridgeplay.appinfo` | command-line tools the run script calls |
 | `bridge/*-unix-lsteamclient.so` | `com.bridgeplay.lsteamclient` | loaded by Wine |
 
 None of them is launched by launchd or LaunchServices, so none is its own responsible
@@ -120,9 +188,9 @@ process: macOS charges Bluetooth, Input Monitoring and the other privacy checks 
 process that started the chain, which is Steam (signed on each Mac with `NotProton Local
 Signing`, `LocalSigning.swift`) or Bridgeplay itself. Signing them with the release identity
 keeps their requirement stable all the same, should one of them ever hold a permission of
-its own. Signing does not change what loads where: a self-signed library, like an ad hoc
-one, has no Team ID, so a process with library validation refuses both and one without it
-takes both. The committed Wine and SDL binaries in `Resources/` keep their own signatures,
+its own. Signing does not change what loads where: the processes these load into (Steam,
+re-signed locally, and the Wine loaders) have no library validation, so they take a library
+from any signer. The committed Wine and SDL binaries in `Resources/` keep their own signatures,
 since their sha256 is pinned (`FreeEngineWinecx.swift`). `np-native` and
 `libnp_gamepad.dylib` are not in the app and stay ad hoc.
 
@@ -133,18 +201,28 @@ p=out/Bridgeplay.app/Contents/Resources/BridgeplayApp_BridgeplayApp.bundle/Conte
 for f in $(find "$p" -type f); do file -b "$f" | grep -q ^Mach-O && codesign -d -r- "$f" 2>&1 | grep designated; done
 ```
 
-Each line should read `identifier "<id>" and certificate leaf = H"<sha1>"`, the same hash as
-the app's. `scripts/release-local.sh` stops if any of them is not signed by the identity. The
+Each line should end in `certificate leaf[subject.OU] = AF38EA29BA`, the app's team. `scripts/release-local.sh` stops if any of them is not signed by the identity. The
 first release with signed helpers moves them from ad hoc to the certificate once; if a user
 ever granted one of them a permission directly, they grant it once more after that update.
 
-### Creating the release identity (once)
+### Setting up the Developer ID (once per Mac)
 
-```sh
-scripts/make-release-cert.sh
-```
+1. In https://developer.apple.com/account/resources/certificates/add create a **Developer ID
+   Application** certificate (G2 Sub-CA) from a CSR, download it and import it with its
+   private key into the login keychain. `security find-identity -v -p codesigning` lists it.
+2. Back it up: Keychain Access, My Certificates, Export as `.p12` with a password. Keep the
+   `.p12` and the password apart (cloud drive and password manager). On a new Mac,
+   double-click the `.p12`.
+3. Create an app-specific password at https://account.apple.com/account/manage, then
+   `xcrun notarytool store-credentials bridgeplay-notary --apple-id <id> --team-id AF38EA29BA`.
 
-It creates the self-signed `Bridgeplay Release` code signing identity (RSA 3072, 20 years)
+Renew the certificate before its expiry date (Keychain Access shows it). A renewed certificate of the
+same team keeps the designated requirement.
+
+### The old self-signed identity
+
+Releases up to the switch were signed with `Bridgeplay Release`. `scripts/make-release-cert.sh`
+still creates the self-signed `Bridgeplay Release` code signing identity (RSA 3072, 20 years)
 in the login keychain, asks for a backup password (12 characters or more) and writes
 `~/Desktop/Bridgeplay-Release.p12`. Move the `.p12` and its password into a password
 manager and delete the file from the Desktop; on a new Mac, double-click the `.p12` to
@@ -152,15 +230,31 @@ import it. Without the backup, a new certificate means one more App Management g
 every user. Do not change the certificate's Trust settings. The first `make app` with the
 identity asks for access to its key; choose Always Allow.
 
+## CJK fonts
+
+The Chinese, Japanese and Korean fonts (Makefile `CJK_FONTS`, about 85 MB) are not in the app.
+`CJKFonts.swift` downloads them once the fonts folder exists, from a `fonts-cjk-<id>`
+prerelease, and checks the archive and every font against its pins. Existing installs already
+have them from earlier apps, so they download nothing. When `fonts/` changes:
+
+1. `make fonts`, then `scripts/package-fonts.sh`. The archive is reproducible, and `<id>` comes
+   from the fonts, so unchanged fonts give the same name and pins.
+2. Copy the pins it prints into `CJKFonts.swift`.
+3. `scripts/package-fonts.sh --publish` creates the release. `release-local.sh` stops while the
+   pinned archive is missing on GitHub.
+
 ## Compatibility reports
 
 The app's one-tap reports go to `https://bridgeplay.dev/api/report` (bridgeplay-web,
 `api/report.mjs`), which posts each one as a Discussion in the `compatibility-reports`
 category of this repository. `api/compat.mjs` counts them (only posts by the report bot)
 for the compatibility page, cached for an hour; `compat/games.json` holds the results a
-maintainer checked and wins over them. Both functions use the `BRIDGEPLAY_BOT_TOKEN`
-Vercel env var: a fine-grained token on this repository with Discussions read and write and
-nothing else.
+maintainer checked and wins over them. Both functions post and read as the
+[Bridgeplay Reports](https://github.com/settings/apps/bridgeplay-reports) GitHub App
+(`bridgeplay-reports[bot]`), installed on this repository only with Discussions read and
+write. Its Vercel env vars are `BRIDGEPLAY_APP_ID`, `BRIDGEPLAY_APP_INSTALLATION_ID` and
+`BRIDGEPLAY_APP_PRIVATE_KEY`. Reports from before 2026-10-22 were posted with a personal
+token and carry the owner's login; they still count.
 
 The app asks about a game at most once per Bridgeplay version (an answer, Not Now or an
 automatic report all count), so a release is when players get asked again about the games

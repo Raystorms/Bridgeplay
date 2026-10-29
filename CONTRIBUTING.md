@@ -2,7 +2,9 @@
 
 Thanks for helping. Bridgeplay is a small, free project, so a short, focused pull request
 is the easiest to review. An imperfect PR is still welcome: say what is unfinished and I can
-help.
+help. These guidelines are adapted from
+[NotProton's contribution guide](https://github.com/NotProtonNot/NotProton/blob/main/CONTRIBUTING.md)
+by NotProtonNot.
 
 1. **Open an issue first** for anything large, and check closed issues and PRs so work is not
    duplicated. Bugs use the "Bug report" template. To say how a game runs, answer the app's
@@ -47,6 +49,16 @@ exceptions:
 | `vendor/cJSON.*`, `steam-shim/jsoncpp.cpp`, `steam-shim/json/` | MIT (cJSON), public domain / MIT (JsonCpp) |
 
 Changes that belong upstream are better sent to [NotProton](https://github.com/NotProtonNot/NotProton).
+
+## Credit
+
+Code you take from someone else keeps their name on it:
+
+- Take a commit with `git cherry-pick -x <commit>`, so its author stays the commit's author
+  and the message names where it came from. Don't amend it under your own name.
+- If you rewrite someone's change, keep them as the author or add a
+  `Co-authored-by: Name <email>` line, and name the commit or pull request in the message.
+- New third-party code goes in [NOTICE](NOTICE) with its author and license.
 
 This project follows a [Code of Conduct](CODE_OF_CONDUCT.md). Report problems at
 https://github.com/raymondchins/Bridgeplay/issues.

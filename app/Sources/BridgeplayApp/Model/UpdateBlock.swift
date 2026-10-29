@@ -89,7 +89,7 @@ enum UpdateBlock {
         } catch let refusal as WriteRefused {
             throw refusal
         } catch let error as NSError where error.code == NSFileWriteNoPermissionError {
-            throw WriteRefused(path: required.path(percentEncoded: false))
+            throw WriteRefused(path: required.path(percentEncoded: false), errno: WriteRefused.posixCode(of: error))
         } catch {
             throw StepFailure(
                 step: step,

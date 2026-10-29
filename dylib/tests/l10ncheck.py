@@ -1,5 +1,4 @@
 import json
-import os
 import pathlib
 import re
 import shutil
@@ -9,12 +8,14 @@ import tempfile
 
 catalog, intermediates = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 languages = sys.argv[3:]
+source_root = catalog.resolve().parents[2]
 
 datas = []
 for path in sorted(intermediates.rglob("*.stringsdata")):
     if "BridgeplayAppTests" in path.parts:
         continue
-    if os.path.exists(json.loads(path.read_text())["source"]):
+    source = pathlib.Path(json.loads(path.read_text())["source"])
+    if source.exists() and source.resolve().is_relative_to(source_root):
         datas.append(str(path))
 if not datas:
     sys.exit(f"l10ncheck: no .stringsdata under {intermediates}, build the app first")

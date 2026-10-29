@@ -19,23 +19,22 @@ steps from it.
 | `*-patch/` (win32u, winemac, winebus, winecoreaudio, wined3d, ws2_32, ngx-signer) | Patches for single WineCX/WineHQ files. The rebuilt binaries are committed in `app/Sources/BridgeplayApp/Resources/` | Wine |
 | `nvapi-shim/` | Windows `nvapi64.dll` that lets games use DLSS (answered by MetalFX) | Wine |
 | `overlay-shim/` | HDR, Metal 4 and frame generation | Game process |
-| `controllers/` | DualSense Bluetooth bridge and Steam Input rumble | Game process, plus a broker process |
 | `native-launch/`, `native-shim/` | Launch wrapper and gamepad shim for native Mac games | Native game process |
-| `helpers/` | Small tools the dylib and run script call (icons, app info, game host, shortcuts) | Command line |
+| `helpers/` | Small tools the dylib and run script call (icons, app info, shortcuts) | Command line |
 | `gamefixes/` | Per-game defaults, `<appid>.conf`. Format: [docs/GAMEFIXES.md](docs/GAMEFIXES.md) | Read by the run script |
 | `installer/`, `scripts/` | The `Install.command` installer, plus build, test and release scripts | — |
 | `fonts/`, `vendor/` | Proton's font build; vendored cJSON (Dobby is cloned, see [vendor/README.md](vendor/README.md)) | — |
 | `compat/` | Game compatibility list, generated from `compat/games.json`. Don't edit `compat/README.md` by hand | — |
 
 More docs: [docs/WINECX.md](docs/WINECX.md) (engine, patch build recipes and pins),
-[docs/DXMT.md](docs/DXMT.md), [docs/dualsense-bluetooth.md](docs/dualsense-bluetooth.md),
-[docs/game-mode-host.md](docs/game-mode-host.md) and [docs/RELEASING.md](docs/RELEASING.md).
+[docs/DXMT.md](docs/DXMT.md) and [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Build and check
 
 A full build needs an Apple Silicon Mac with Xcode 27. Prerequisites, caches and timings
-are in [docs/BUILD-LOCAL.md](docs/BUILD-LOCAL.md). The workflows run only `make scriptcheck`
-and `make runcheck` (shellcheck 0.11.0) on Linux; everything else runs on macOS.
+are in [docs/BUILD-LOCAL.md](docs/BUILD-LOCAL.md). The lint workflow runs only `make scriptcheck`
+and `make runcheck` (shellcheck 0.11.0) on Linux. The `app` workflow decides on Linux whether a change is
+docs-only (`.github/docs-only-paths`) and ends in the `app gate` job; everything else runs on macOS.
 
 ```sh
 scripts/build-local.sh            # full build in CI order; --checks also runs checks and Swift tests
@@ -58,11 +57,10 @@ The checks the workflows run (`make -s <target>`):
 - **Lint:** `scriptcheck`, `runcheck`
 - **App:** `mincheck`, `l10ncheck`, `app-tests` (the Swift tests)
 - **C and shell suites:** `sigcheck`, `callscheck`, `webpatch-fixtures`, `peicon-fixtures`,
-  `panel-behavior`, `spawn-env`, `activatecheck`, `compatcheck`, `compatsvc-check`,
+  `panel-behavior`, `spawn-env`, `activatecheck`, `compatcheck`, `compatsvc-check`, `prefixstate-check`,
   `shortcutcheck`, `launch-shell`, `envcheck`, `buildcheck`, `settingscheck`, `routecheck`,
-  `bridgecheck`, `gamedrivecheck`, `launchercheck`, `seedcheck`, `gamefixescheck`,
+  `bridgecheck`, `envpasscheck`, `prefixnotecheck`, `powernotecheck`, `exitcheck`, `launchprogresscheck`, `gamedrivecheck`, `launchercheck`, `seedcheck`, `gamefixescheck`, `versioncheck`, `cicheck`,
   `compat-reported-check`
-- **Hardware-free device checks:** `game-host-check`, `dualsense-check`, `steam-rumble-check`
 
 `make tests-list` prints the test paths. A check whose tool or input is missing prints
 `skipped` and exits 0: that is not a pass. Install the tool, or say the check didn't run.
@@ -75,8 +73,16 @@ the dylib into `Steam.app` and installs the signatures, fonts and helpers into
 ## Rules
 
 - **Large changes:** open an issue first. Check closed issues and PRs for duplicate work.
-  Changes that belong upstream go to NotProton.
-- **PR descriptions** are written by the contributor in their own words. Don't generate one.
+  Changes that belong upstream go to NotProton. Port an upstream PR only after it is merged
+  there; until then, wait for the maintainer's version.
+- **Credit:** code taken from someone else keeps its author. Use `git cherry-pick -x` and
+  don't amend or reset the author; a rewrite keeps the original author or adds a
+  `Co-authored-by:` line and names the source commit or PR. New third-party code goes in
+  [NOTICE](NOTICE). See CONTRIBUTING.md.
+- **PR descriptions:** an agent may draft one, filling every section of
+  `.github/pull_request_template.md` with the checks actually run and what wasn't tested.
+  The contributor reviews it before the PR opens. Replies to people in issues, PRs and
+  discussions are written by a human, not generated.
 - **Comments:** keep them short. Comment where the code is hard to follow, not where it is
   obvious.
 - **Run the checks your change touches** before opening a PR.
@@ -91,8 +97,9 @@ the dylib into `Steam.app` and installs the signatures, fonts and helpers into
 - **Wine patches:** a patch change is not finished until the binary it produces is
   rebuilt with the recipe in [docs/WINECX.md](docs/WINECX.md) or the patch folder's
   README. Then update its sha256 pins (in `docs/WINECX.md` and
-  `app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift`) and its entry in
-  [NOTICE](NOTICE). Don't commit a binary without its patch.
+  `app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift`, plus
+  `app/Sources/BridgeplayApp/Support/SignedPin.swift` for a `.so` or `.dylib`) and its
+  entry in [NOTICE](NOTICE). Don't commit a binary without its patch.
 - **Legacy names stay:** existing installs depend on `notproton.dylib`, the `NOTPROTON_*`
   variables, `com.notproton.*` identifiers and the fallback to the old `notproton` support
   folders. Don't rename them. User-facing names are Bridgeplay's (`BRIDGEPLAY_*`).

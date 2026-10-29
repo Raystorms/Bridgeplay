@@ -145,3 +145,52 @@ struct SteamDefaultToolTests {
         #expect(SteamDefaultTool.current(in: Self.config(nil)) == nil)
     }
 }
+
+@Suite("Steam per-game tool entries")
+struct SteamGameEntriesTests {
+    private static func game(_ id: String, _ tool: String) -> String {
+        "\t\t\t\t\t\"\(id)\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"name\"\t\t\"\(tool)\"\n\t\t\t\t\t\t\"config\"\t\t\"\"\n\t\t\t\t\t\t\"priority\"\t\t\"250\"\n\t\t\t\t\t}"
+    }
+
+    private static func vdf(_ entries: [String]) -> String {
+        (["\"InstallConfigStore\"", "{", "\t\"Software\"", "\t{", "\t\t\"valve\"", "\t\t{", "\t\t\t\"Steam\"", "\t\t\t{",
+         "\t\t\t\t\"CompatToolMapping\"", "\t\t\t\t{"]
+            + entries + ["\t\t\t\t}", "\t\t\t}", "\t\t}", "\t}", "}"])
+            .joined(separator: "\n")
+    }
+
+    @Test("Removes Bridgeplay and legacy entries, keeps the rest")
+    func removesOurs() throws {
+        let text = Self.vdf([
+            Self.game("0", "bridgeplay-proton-winecx-11.17"), Self.game("10", "bridgeplay-proton-winecx-11.17"),
+            Self.game("20", "proton_9"), Self.game("30", "notproton-winecx-11.17"),
+        ])
+        let result = try #require(SteamDefaultTool.removingOurGameEntries(text))
+        #expect(result == Self.vdf([Self.game("0", "bridgeplay-proton-winecx-11.17"), Self.game("20", "proton_9")]))
+    }
+
+    @Test("Returns nil when no entry is ours")
+    func nothingToRemove() {
+        #expect(SteamDefaultTool.removingOurGameEntries(Self.vdf([Self.game("20", "proton_9")])) == nil)
+        #expect(SteamDefaultTool.removingOurGameEntries(Self.vdf([Self.game("0", "bridgeplay-proton")])) == nil)
+    }
+
+    @Test("Leaves the file untouched when nothing matches, and refuses while Steam runs")
+    func fileHandling() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "bp-gameentries-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appending(path: "config.vdf")
+        let other = Self.vdf([Self.game("20", "proton_9")])
+        try other.write(to: file, atomically: true, encoding: .utf8)
+        #expect(try SteamDefaultTool.removeGameEntries(in: file, steamRunning: { true }) == false)
+        #expect(try String(contentsOf: file, encoding: .utf8) == other)
+
+        try Self.vdf([Self.game("10", "bridgeplay-proton-x")]).write(to: file, atomically: true, encoding: .utf8)
+        #expect(throws: SteamDefaultTool.SteamRunning.self) {
+            try SteamDefaultTool.removeGameEntries(in: file, steamRunning: { true })
+        }
+        #expect(try SteamDefaultTool.removeGameEntries(in: file, steamRunning: { false }))
+        #expect(try String(contentsOf: file, encoding: .utf8) == Self.vdf([]))
+    }
+}

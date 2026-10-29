@@ -3,9 +3,9 @@
 # rejected before it could be read, 1 is one read and reported as broken, 0 is
 # one read with nothing worth reporting.
 #
-# The fixtures that claim the build of the client installed on the machine are
-# judged against that client, so a client update can move them. The failure
-# names the fixture and both statuses when that happens.
+# The fixtures in live/ have to describe the client installed on the machine.
+# They are templates: anchorcheck --rebase fills in the addresses and patterns
+# from that client, so a Steam update cannot move their status.
 
 1 all_deprecated.json
 0 array_root.json

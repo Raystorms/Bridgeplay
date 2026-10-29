@@ -45,3 +45,6 @@ installer/*.zip
 *sparkle*private*
 *sparkle_key*
 *.ed25519
+
+# Local Claude Code state (launch configs, session files).
+.claude/

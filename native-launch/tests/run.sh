@@ -146,6 +146,9 @@ expect "dyld: user list between ours and Steam's" \
 	"DYLD_INSERT_LIBRARIES=$pad:$tmp/libs/user.dylib:$steamlib" "loaded:user"
 run "$V" -- NP_PAD_MODE=off "$probe"
 expect "dyld: nothing to inject leaves it unset" "DYLD_INSERT_LIBRARIES=(unset)"
+run "$V" "STEAM_DYLD_INSERT_LIBRARIES=$tmp/libs/missing.dylib" -- NP_PAD_MODE=off "$probe"
+expect "dyld: a STEAM_DYLD_ list of missing libraries is unset too" \
+	"DYLD_INSERT_LIBRARIES=(unset)" "STEAM_DYLD_INSERT_LIBRARIES=(unset)"
 
 # shell-script games (dota.sh): SIP strips DYLD_* in /bin/sh, the script
 # restores it from STEAM_DYLD_INSERT_LIBRARIES

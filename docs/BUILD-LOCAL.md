@@ -36,7 +36,8 @@ output to `build/logs/<phase>.log`.
 
 At the end the script prints the version (from `dylib/version.h`: `make app` writes
 `BRIDGEPLAY_VERSION` into `CFBundleShortVersionString` and `BRIDGEPLAY_BUILD` into
-`CFBundleVersion`, see [RELEASING.md](RELEASING.md)) and the zip's sha256.
+`CFBundleVersion`, see [RELEASING.md](RELEASING.md)) and the zip's sha256. A beta build prints its
+stamped label instead (see "Betas" in RELEASING.md).
 
 ## Timings (M5 Max, 18 cores, Xcode 27.0 beta 27A5218g)
 
@@ -49,8 +50,8 @@ At the end the script prints the version (from `dylib/version.h`: `make app` wri
 | bridge | 14m00s | 13s |
 | app-payload | 0s | 0s |
 | app | 42s | 13s |
-| checks (`--checks`) | about 3m20s | 3m20s |
-| total | about 15m, about 18m with checks | 27s, 3m47s with checks |
+| checks (`--checks`, side by side) | about 1m05s | 55s |
+| total | about 15m, about 16m with checks | 27s, 1m22s with checks |
 
 A `fonts` phase (the Proton font build, needs fontforge and the font tools) also runs; it is
 not in the table because it was added after these timings.
@@ -85,9 +86,27 @@ disk. All of these paths are gitignored:
 `register-components.diff` changes, the script prints a warning. To rebuild fresh the way
 CI would, run `rm -rf scratch/wine scratch/wine-build-dual scratch/wine-build-arm64 scratch/.wine-key`.
 
-The Wine build trees record their source tree by absolute path (`srcdir = <repo>/scratch/wine`).
-To reuse them from another checkout, symlink that checkout's `scratch` to this one. Don't
-copy them. Two builds sharing one tree must not run at the same time.
+The bridge phase is skipped when `scratch/.bridge-key` (written after each bridge build)
+matches `scripts/bridge-key.sh`, a hash of `bridge/`, `lsteamclient/` and `steam-shim/`, the
+same sources CI keys its bridge cache on.
+
+### A new worktree
+
+The Wine build trees record their source tree by absolute path (`srcdir = <repo>/scratch/wine`),
+so they can't be copied, and two checkouts building in one shared tree would overwrite each
+other's bridge. Seed the worktree instead, then build:
+
+```sh
+scripts/worktree-seed.sh      # from the main worktree; or pass another checkout
+scripts/build-local.sh
+```
+
+The seed clones (APFS `cp -c`: instant, no extra disk) Dobby, the fonts and their stamp, the
+Proton tarball and, when both checkouts have the same bridge sources, the five bridge outputs.
+The font venv is linked. Measured on the M5 Max: the seed takes 1–2s and the first build 45s,
+instead of about 15m. When the bridge sources differ, the Wine source is cloned instead and the
+bridge is built in the worktree without the 8m30s clone: 3m21s, 4m05s for the whole build.
+`app/.build` is not seeded: SwiftPM records absolute paths, and a cold app build is 35s.
 
 ## Local deviation from CI
 

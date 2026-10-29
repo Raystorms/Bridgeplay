@@ -24,11 +24,26 @@ const OTHER_KEYS = ['WINEDEBUG', 'DXVK_HUD', 'FOO'];
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'np-shell-'));
 const probe = path.join(dir, 'probe');
-fs.writeFileSync(probe, '#!' + process.execPath + '\n' +
-  `const k=${JSON.stringify(PANEL_KEYS.concat(OTHER_KEYS))};const e={};` +
-  'k.forEach(n=>{if(n in process.env)e[n]=process.env[n]});' +
-  'require("fs").appendFileSync(process.env.NP_PROBE_OUT,' +
-  'JSON.stringify({argv:process.argv.slice(2),env:e})+"\\n");\n', { mode: 0o755 });
+// The game: appends one record per run, argc, the arguments, then a set flag and value
+// per key, each field NUL-terminated. A shell script starts in milliseconds, node in ~80.
+const KEYS = PANEL_KEYS.concat(OTHER_KEYS);
+fs.writeFileSync(probe, '#!/bin/sh\n{\n' +
+  `  printf '%s\\0' "$#"\n  for a in "$@"; do printf '%s\\0' "$a"; done\n` +
+  KEYS.map(k => `  if [ "\${${k}+set}" ]; then printf '1\\0%s\\0' "$${k}"; else printf '0\\0'; fi\n`).join('') +
+  '} >>"$NP_PROBE_OUT"\n', { mode: 0o755 });
+
+function records(text) {
+  const f = text.split('\0');
+  const runs = [];
+  for (let n = 0; n < f.length - 1;) {
+    const argc = Number(f[n++]);
+    const run = { argv: f.slice(n, n + argc), env: {} };
+    n += argc;
+    for (const k of KEYS) if (f[n++] === '1') run.env[k] = f[n++];
+    runs.push(run);
+  }
+  return runs;
+}
 fs.writeFileSync(path.join(dir, 'gamemoderun'), '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
 
 const quote = s => "'" + s.replace(/'/g, "'\\''") + "'";
@@ -48,7 +63,7 @@ function launch(shell, options) {
     env: { PATH: dir + ':/usr/bin:/bin', HOME: process.env.HOME, NP_PROBE_OUT: out },
     cwd: dir, timeout: 10000, stdio: 'ignore',
   });
-  return fs.existsSync(out) ? fs.readFileSync(out, 'utf8').trim().split('\n').map(JSON.parse) : [];
+  return fs.existsSync(out) ? records(fs.readFileSync(out, 'utf8')) : [];
 }
 
 function view(form, options) {

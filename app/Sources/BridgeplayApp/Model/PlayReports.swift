@@ -23,19 +23,54 @@ struct ReportPayload: Codable, Equatable, Sendable {
     // What the player wrote after Has Issues or Didn't Run, and a few facts about the Mac
     // (GameReport.setup). Older endpoints ignore both.
     var note: String?
+    var issue: ReportIssue?
+    var model: String?
     var setup: [String: String]?
     var log: String?
     var wineLog: String?
 
-    // Together under the endpoint's 1 MB cap, newest lines kept.
+    // Newest lines kept. These count characters, not bytes, so encoded() is what keeps the
+    // JSON under the endpoint's 1 MB cap.
     static let logLimit = 550_000
     static let wineLogLimit = 350_000
+    static let maximumEncodedSize = 1_000_000
+
+    func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        let full = try encoder.encode(self)
+        guard full.count > Self.maximumEncodedSize else { return full }
+
+        var trimmed = self
+        trimmed.log = nil
+        trimmed.wineLog = nil
+        var result = try encoder.encode(trimmed)
+        guard result.count <= Self.maximumEncodedSize else {
+            throw EncodingError.invalidValue(self, .init(codingPath: [], debugDescription: "Report metadata exceeds the upload limit."))
+        }
+
+        var lower = 0
+        var upper = max(log?.count ?? 0, wineLog?.count ?? 0)
+        while lower <= upper {
+            let limit = lower + (upper - lower) / 2
+            trimmed.log = log.map { String($0.suffix(limit)) }
+            trimmed.wineLog = wineLog.map { GameReport.wineTail($0, limit: limit) }
+            let candidate = try encoder.encode(trimmed)
+            if candidate.count <= Self.maximumEncodedSize {
+                result = candidate
+                lower = limit + 1
+            } else {
+                upper = limit - 1
+            }
+        }
+        return result
+    }
 
     static func make(name: String, appID: String, status: ReportStatus, source: Source, session: GameSession,
                      log: String?, wineLog: String?, machine: GameReport.Machine, install: String,
-                     note: String? = nil) -> ReportPayload {
+                     note: String? = nil, issue: ReportIssue? = nil) -> ReportPayload {
         let launch: (engine: String?, backend: String?) = log.map(GameReport.lastLaunch) ?? (nil, nil)
-        var summary = session.summary(wineLog: wineLog)
+        var summary = session.summary(log: log, wineLog: wineLog)
+        if let newer = machine.newerRelease { summary += ". A newer Bridgeplay was out: \(newer)" }
         if source == .auto { summary += ". Status inferred from the log" }
         return ReportPayload(
             appid: appID, status: status, install: install, source: source, name: name,
@@ -43,9 +78,11 @@ struct ReportPayload: Codable, Equatable, Sendable {
             macos: machine.macOS, version: machine.bridgeplay, engine: launch.engine, backend: launch.backend,
             session: summary,
             note: note.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : String($0.prefix(1000)) },
+            issue: status == .bronze ? issue : nil,
+            model: machine.model,
             setup: machine.setup.isEmpty ? nil : machine.setup,
             log: log.map { String(GameReport.redacted($0).suffix(logLimit)) },
-            wineLog: wineLog.map { String(GameReport.redacted($0).suffix(wineLogLimit)) })
+            wineLog: wineLog.map { GameReport.wineTail(GameReport.redacted($0), limit: wineLogLimit) })
     }
 }
 
@@ -69,13 +106,20 @@ struct ReportSender: Sendable {
     }
 
     func submit(_ payload: ReportPayload) async -> Outcome {
+        let body: Data
+        do {
+            body = try payload.encoded()
+        } catch {
+            AppLog.note("play report: could not encode the report: \(error.localizedDescription)")
+            return .dropped
+        }
         let file = queue.appending(path: "\(payload.appid)-\(UUID().uuidString).json")
         do {
             try FileManager.default.createDirectory(at: queue, withIntermediateDirectories: true)
-            try JSONEncoder().encode(payload).write(to: file, options: .atomic)
+            try body.write(to: file, options: .atomic)
         } catch {
             AppLog.note("play report: could not queue the report: \(error.localizedDescription)")
-            return await post(try? JSONEncoder().encode(payload))
+            return await post(body)
         }
         return await send(file)
     }
@@ -103,7 +147,12 @@ struct ReportSender: Sendable {
     }
 
     private func post(_ body: Data?) async -> Outcome {
-        guard let body else { return .dropped }
+        guard var body else { return .dropped }
+        if body.count > ReportPayload.maximumEncodedSize {
+            guard let payload = try? JSONDecoder().decode(ReportPayload.self, from: body),
+                  let bounded = try? payload.encoded() else { return .dropped }
+            body = bounded
+        }
         var request = URLRequest(url: endpoint, timeoutInterval: 30)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -138,7 +187,7 @@ final class PlayReports {
 
     // What the consent sheet is for: one answer, several from Report Your Games…, or
     // turning auto-share on.
-    enum ConsentRequest: Equatable { case answer(ReportStatus, note: String?), bulk([String], ReportStatus), autoShare }
+    enum ConsentRequest: Equatable { case answer(ReportStatus, note: String?, issue: ReportIssue? = nil), bulk([String], ReportStatus), autoShare }
 
     private(set) var nudges: [Nudge] = []
     var consentRequest: ConsentRequest?
@@ -240,15 +289,15 @@ final class PlayReports {
     }
 
     // The player picked an answer on the card; the first one asks for consent.
-    func answer(_ status: ReportStatus, note: String? = nil) {
+    func answer(_ status: ReportStatus, note: String? = nil, issue: ReportIssue? = nil) {
         guard let nudge else { return }
         guard hasConsent else {
-            consentRequest = .answer(status, note: note)
+            consentRequest = .answer(status, note: note, issue: issue)
             return
         }
         advance(past: nudge)
         recordAsked(nudge.prefix.appID, answer: status)
-        send(nudge, status: status, source: .tap, note: note)
+        send(nudge, status: status, source: .tap, note: note, issue: issue)
         thanksGeneration += 1
         let generation = thanksGeneration
         thanking = true
@@ -263,7 +312,7 @@ final class PlayReports {
         let request = consentRequest
         consentRequest = nil
         if alsoAutoShare || request == .autoShare { setAutoShare(true) }
-        if case .answer(let status, let note) = request { answer(status, note: note) }
+        if case .answer(let status, let note, let issue) = request { answer(status, note: note, issue: issue) }
         if case .bulk(let appIDs, let status) = request { answerBulk(appIDs, status) }
     }
 
@@ -405,7 +454,8 @@ final class PlayReports {
         }
     }
 
-    private func send(_ nudge: Nudge, status: ReportStatus, source: ReportPayload.Source, note: String? = nil) {
+    private func send(_ nudge: Nudge, status: ReportStatus, source: ReportPayload.Source, note: String? = nil,
+                      issue: ReportIssue? = nil) {
         let prefix = nudge.prefix, session = nudge.session
         Task {
             let logs = await Task.detached {
@@ -413,7 +463,7 @@ final class PlayReports {
                  try? String(contentsOf: PrefixLog.wine.url(for: prefix), encoding: .utf8))
             }.value
             submitAll([(Found(prefix: prefix, session: session, log: logs.0 ?? "", wineLog: logs.1), status)],
-                      source: source, note: note)
+                      source: source, note: note, issue: issue)
         }
     }
 
@@ -423,16 +473,21 @@ final class PlayReports {
 
     // Redacting a large log takes a moment, so payloads are built off the main thread, and
     // sent one after another so a batch stays within the endpoint's rate limits.
-    private func submitAll(_ items: [(Found, ReportStatus)], source: ReportPayload.Source, note: String? = nil) {
+    private func submitAll(_ items: [(Found, ReportStatus)], source: ReportPayload.Source, note: String? = nil,
+                           issue: ReportIssue? = nil) {
         var machine = GameReport.thisMac
         machine.setup = GameReport.setup()
         let sender = sender(), install = installID
         Task.detached {
             for (item, status) in items {
+                var machine = machine
+                if let reg = try? String(contentsOf: item.prefix.pfx.appending(path: "user.reg"), encoding: .utf8) {
+                    machine.setup["retina"] = GameReport.retina(reg)
+                }
                 let payload = ReportPayload.make(
                     name: item.prefix.title, appID: item.prefix.appID, status: status, source: source, session: item.session,
                     log: item.log.isEmpty ? nil : item.log, wineLog: item.wineLog, machine: machine, install: install,
-                    note: note)
+                    note: note, issue: issue)
                 let outcome = await sender.submit(payload)
                 AppLog.note("play report: \(payload.appid) \(payload.status.rawValue) (\(payload.source.rawValue)): \(outcome)")
             }

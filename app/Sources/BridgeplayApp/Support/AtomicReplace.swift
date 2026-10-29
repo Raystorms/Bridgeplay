@@ -16,7 +16,7 @@ func atomicReplace(_ destination: URL, from source: URL, step: String) throws {
     ) != 0 {
         let code = errno
         if code == EACCES || code == EPERM {
-            throw WriteRefused(path: destination.path(percentEncoded: false))
+            throw WriteRefused(path: destination.path(percentEncoded: false), errno: code)
         }
         let reason = String(cString: strerror(code))
         throw StepFailure(

@@ -31,7 +31,8 @@ struct BackupsView: View {
                         tone: .bad,
                         action: failed.settingsPane.map { pane in
                             StatusAction(label: Remedy.settingsButton) { Remedy.openSettings(pane) }
-                        }
+                        },
+                        menu: ErrorReport.actions(failed.message, in: "Prefix Backups")
                     )
                 )
             } else if let outcome = model.outcome {

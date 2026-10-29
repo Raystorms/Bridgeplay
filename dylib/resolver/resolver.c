@@ -139,10 +139,18 @@ static uintptr_t try_anchor(np_sig_entry_t *sig,
         return alt;
     }
 
-    if (alt && alt != addr)
+    if (alt && alt != addr) {
+        // Two sources naming different function entries means at least one is wrong,
+        // and nothing here says which, so the feature stays off.
+        if (anchor_targets_function_entry(sig->anchor.kind)) {
+            NP_WARN("resolver: '%s' anchor 0x%lx disagrees with byte pattern 0x%lx; "
+                    "rejecting", sig->name, (unsigned long)addr, (unsigned long)alt);
+            return 0;
+        }
         NP_WARN("resolver: '%s' anchor 0x%lx disagrees with byte pattern 0x%lx; "
                 "keeping the anchor", sig->name, (unsigned long)addr,
                 (unsigned long)alt);
+    }
 
     NP_LOG("resolver: '%s' -> 0x%lx [anchor]", sig->name, (unsigned long)addr);
     return addr;

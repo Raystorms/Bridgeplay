@@ -12,6 +12,10 @@
 extern int DobbyHook(void *address, void *replace_call, void **origin_call);
 typedef void (*np_prehook_fn)(void *address, void *ctx);
 extern int DobbyInstrument(void *address, np_prehook_fn pre_handler);
+extern int DobbyCodePatch(void *address, uint8_t *buffer, uint32_t buffer_size);
+
+// The longest trampoline Dobby writes on arm64: LDR, BR and an 8-byte literal.
+#define NP_TRAMPOLINE_MAX 16
 
 int np_hooks_env_lists_label(const char *var, const char *label) {
     const char *list = getenv(var);
@@ -66,6 +70,9 @@ static int np_apply_entry(np_resolve_result_t *resolved, const char *group,
         return 0;
     }
 
+    uint8_t before[NP_TRAMPOLINE_MAX];
+    memcpy(before, (const void *)addr, sizeof(before));
+
     int prehook = (e->mode == NP_PATCH_PREHOOK);
     int rc = prehook ? DobbyInstrument((void *)addr, (np_prehook_fn)e->entry)
                      : DobbyHook((void *)addr, e->entry, e->trampoline);
@@ -75,11 +82,17 @@ static int np_apply_entry(np_resolve_result_t *resolved, const char *group,
         return 1;
     }
 
-    // Dobby patches the target before reporting the error and never registers the
-    // entry, so the patch cannot be lifted.
-    NP_ERR("[%s] %s: %s failed (ret=%d) @ %p, target may stay patched with no original; "
-           "the hook degrades instead of calling it",
-           group, e->label, prehook ? "DobbyInstrument" : "DobbyHook", rc, (void *)addr);
+    // Dobby writes the trampoline even when relocating the original failed, then
+    // returns an error with no original and no registered entry. Put the bytes back
+    // so Steam runs its own code; if that fails the hook degrades instead.
+    int patched = memcmp((const void *)addr, before, sizeof(before)) != 0;
+    int restored = patched && DobbyCodePatch((void *)addr, before, sizeof(before)) == 0
+        && memcmp((const void *)addr, before, sizeof(before)) == 0;
+    NP_ERR("[%s] %s: %s failed (ret=%d) @ %p, %s", group, e->label,
+           prehook ? "DobbyInstrument" : "DobbyHook", rc, (void *)addr,
+           !patched ? "target untouched"
+           : restored ? "original bytes restored"
+           : "target stays patched with no original, the hook degrades instead");
     return 0;
 }
 

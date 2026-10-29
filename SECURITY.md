@@ -25,8 +25,24 @@ user is a hardening request, not a vulnerability, but it is still welcome as an 
 
 ## Known trade-offs
 
-- Bridgeplay releases are signed with a self-signed certificate (no Apple Developer ID)
-  and not notarized, and the installer removes the download's
-  quarantine flag. Download it only from https://bridgeplay.dev or the GitHub releases.
-- Steam is re-signed so it can load Bridgeplay, which removes Valve's hardened runtime.
+- Releases are signed with the maintainer's Apple Developer ID (Team AF38EA29BA) and notarized by Apple.
+  Download only from https://bridgeplay.dev or GitHub.
+- Steam is re-signed to load Bridgeplay, with a local "NotProton Local Signing" keychain identity or ad hoc,
+  and loses Valve's hardened runtime.
+- `notproton.dylib` loads for every macOS user of a shared `/Applications/Steam.app`.
+- Setup removes quarantine in three places, each after a check. Bridgeplay.app must carry the
+  maintainer's signature and Steam.app Valve's. The Wine engine must match its pinned hashes first. In a
+  CrossOver clone only the Wine loader and `ntdll.dll` are pinned; the rest of the clone isn't checked
+  file by file. macOS refuses to load a quarantined Wine file once Bridgeplay has patched it and signed
+  it ad hoc. Setup also resets Steam's Accessibility, PostEvent and ListenEvent approvals
+  (`tccutil`), re-signs Wine loaders ad hoc where needed, and sets Steam's default compatibility tool
+  (`config.vdf`).
+- Optional "Block Steam client updates" (`BootStrapperInhibitUpdateOnLaunch` in `steam.cfg`) also blocks
+  Steam's security fixes.
+- Game calls to Steam's `steamclient` are redirected in memory to Proton's lsteamclient (`ntdll-patch/`).
+- D3DMetal games see an NVIDIA GeForce RTX 4090 by default (`NVAPI=1`) so DLSS shows up; `NVAPI=0` turns it off.
+- For Apple's MetalFX DLSS only, patched `crypt32` and `wintrust` pass NVIDIA's signature check on Apple's
+  `nvngx.dll` (`ngx-signer-patch/`).
+- Some gamefixes turn off a game's Wine check to unlock DLSS (`/WineDetectionEnabled:False`,
+  `HIDE_WINE_EXPORTS`).
 - Updates are verified with an EdDSA signature (`SUPublicEDKey`) before they are installed.

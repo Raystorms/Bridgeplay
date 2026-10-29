@@ -2,12 +2,20 @@ Bridgeplay licensing
 ====================
 
 Bridgeplay
-Copyright (C) 2026 Raymond Chin
+Copyright (C) 2026 NotProtonNot and the NotProton contributors
+Copyright (C) 2026 Leon Seemann (NotProton-WineHQ)
+Copyright (C) 2026 Raymond Chin and the Bridgeplay contributors
 https://github.com/raymondchins/Bridgeplay
 
-Bridgeplay is a modified version (fork) of NotProton,
-https://github.com/NotProtonNot/NotProton, by way of NotProton-WineHQ (below).
-It is licensed under the GNU General Public License version 3 (GPL-3.0), the
+Bridgeplay is a modified version (fork) of NotProton by NotProtonNot,
+https://github.com/NotProtonNot/NotProton, by way of Leon Seemann's
+NotProton-WineHQ (below). Raymond Chin and the Bridgeplay contributors have
+modified it since October 2026. The git history records every change, when it
+was made and by whom; commits taken from NotProton name the upstream commit or
+pull request they came from. The NotProton version Bridgeplay is based on is
+shown in the app's About window and in each release's notes.
+
+Bridgeplay is licensed under the GNU General Public License version 3 (GPL-3.0), the
 same terms as NotProton; see LICENSE. Bridgeplay is free and non-commercial.
 "Non-commercial" describes how Bridgeplay is distributed and is required by Apple's
 Game Porting Toolkit license (below); it does not restrict anyone's rights under the
@@ -25,10 +33,11 @@ Sparkle 2.10.0 (https://github.com/sparkle-project/Sparkle), embedded in the app
 as Sparkle.framework for updates, is licensed under the MIT license together
 with the external licenses it lists. Full text: LICENSE.sparkle.
 
-The DualSense Bluetooth bridge (controllers/dualsense/) and the Steam Input
-rumble forwarding (controllers/steam-input/) were written by sn0wst0rm and
-ported from sn0wst0rm's NotProton fork (https://github.com/sn0wst0rm/NotProton),
-GPL-3.0.
+Bridgeplay 0.7.51 and earlier also shipped a DualSense Bluetooth bridge, Steam
+Input rumble forwarding and a game-mode host, written by sn0wst0rm
+(https://github.com/sn0wst0rm/NotProton, GPL-3.0). They are left out until the
+same work, proposed to NotProton as
+https://github.com/NotProtonNot/NotProton/pull/90, is merged there.
 
 Patched Wine (WineCX) binaries
 ------------------------------
@@ -38,7 +47,8 @@ setup. Each is built from CodeWeavers' winecx source, as rebased by dappermint
 (https://github.com/dappermint/winecx) and packaged as a runtime by
 https://github.com/dappermint/winecx-gptk, with a patch from this repository.
 Wine is licensed under the GNU Lesser General Public License, version 2.1 or
-later (LGPL-2.1-or-later); these files keep that license. Build recipes and
+later (LGPL-2.1-or-later); these files keep that license. Wine's license notice
+and the LGPL-2.1 text ship in the app as LICENSE.wine. Build recipes and
 sha256 pins are in docs/WINECX.md and each patch directory's README.
 
   WineCX 11.17 (winecx e0aa380780b73e20fabcfe78fd42713b94929a53, runtime 4.7.3):
@@ -50,8 +60,14 @@ sha256 pins are in docs/WINECX.md and each patch directory's README.
     winecoreaudio-winecx-11.17.so winecoreaudio-patch/winecx-render-buffer.patch
     wined3d-winecx-11.17.dll      wined3d-patch/winecx-driver-version.patch
     ws2_32-winecx-11.17.dll       ws2_32-patch/winecx-own-hostname.patch
+    d3dx11_43-winecx-11.17.dll    d3dx11-patch/winecx-create-thread-pump.patch
+    d3dx11_43-winecx-11.17-i386.dll  (same patch)
+    d3dx11_42-winecx-11.17.dll    (same patch)
+    d3dx11_42-winecx-11.17-i386.dll  (same patch)
     crypt32-winecx-11.17.dll      ngx-signer-patch/winecx-ngx-signer.patch
     wintrust-winecx-11.17.dll     ngx-signer-patch/winecx-ngx-signer.patch
+    kernel32-winecx-11.17.dll     hide-wine-exports-patch/winecx-hide-wine-exports.patch
+    kernelbase-winecx-11.17.dll   hide-wine-exports-patch/winecx-hide-wine-exports.patch
 
   WineCX 11.15 (winecx 5b45f4564c4f87fa9c0f958733a5e9bb3918a058, runtime 4.5.125):
     winemac-winecx-11.15.so       winemac-patch/winecx-d3dmetal-retina.patch
@@ -67,33 +83,42 @@ same folder). nvapi64-shim.dll is Bridgeplay's own code, built from nvapi-shim/.
 Shipped in the one-click installer (Bridgeplay-Installer.zip)
 -------------------------------------------------------------
 
-Besides the app, the installer carries these unmodified archives, so a Mac can set
+The installer carries no app (Install.command downloads Bridgeplay.zip from this
+project's GitHub releases). It carries these unmodified archives, so a Mac can set
 up without downloading them. The app installs the same archives (pinned by sha256
-in app/Sources/BridgeplayApp/Model/FreeEngine*.swift) when they are not there.
+in app/Sources/BridgeplayApp/Model/FreeEngine.swift) when they are not there.
 
-  WineCX runtime 4.7.3 (Libraries.tar.gz from
-      https://github.com/dappermint/winecx-gptk/releases/tag/runtime-v4.7.3):
-      Wine built from https://github.com/dappermint/winecx at
-      e0aa380780b73e20fabcfe78fd42713b94929a53, LGPL-2.1-or-later, with the
-      third-party libraries that runtime bundles under their own licenses.
   DXMT (dxmt-e94c312.tar.gz, built from https://github.com/3Shain/dxmt at
       e94c312f5c054263acf261cfa109edf13e757587; docs/DXMT.md), Copyright (c)
       2023-2026 Feifan He for CodeWeavers, LGPL-2.1-or-later.
   DXVK-macOS 1.10.3 (dxvk-macOS-async-v1.10.3-20230507-repack-builtin.tar.gz from
       https://github.com/Gcenx/DXVK-macOS/releases/tag/v1.10.3-20230507-repack),
       zlib license.
-  Apple Game Porting Toolkit redistributables (gptk/: D3DMetal.framework and the
-      wine/ libraries from the toolkit's /redist directory), Apple software under
-      Apple's license, shipped as GPTK-License.rtf. Apple's license allows
-      distributing it "solely for non-commercial purposes" (section 2A(iii)), and
-      allows the Framework and Redistributables to be "distributed separately from
-      the Apple Software" (section 2C). The wine/ libraries are Apple's build of
-      Wine (LGPL-2.1-or-later); their source is the Wine source Apple publishes
-      for the Game Porting Toolkit, which Raymond Chin will also provide on request
-      under the offer below. How each condition of Apple's license is met:
+  Apple Game Porting Toolkit redistributables (gptk/: external/ with
+      D3DMetal.framework and libd3dshared.dylib, and wine/, from the toolkit's
+      /redist/lib directory), Apple software under Apple's license, shipped as
+      GPTK-License.rtf. Apple's license allows distributing it "solely for
+      non-commercial purposes" (section 2A(iii)), and allows the Framework and
+      Redistributables to be "distributed separately from the Apple Software"
+      (section 2C). The wine/ folder is not Wine: wine/x86_64-windows holds only
+      Apple's proprietary D3DMetal front-end DLLs (d3d10, d3d11, d3d12,
+      d3d12core, dxgi, nvapi64 and nvngx-on-metalfx.dll), and wine/x86_64-unix
+      holds only symlinks to external/libd3dshared.dylib. Apple publishes no
+      source for them, and none is offered here. How each condition of Apple's license is met:
       docs/GPTK-LICENSE.md.
 
 The license texts of DXMT and DXVK ship next to these archives in the installer.
+
+Not shipped in the installer: the WineCX runtime (Libraries.tar.gz from
+https://github.com/dappermint/winecx-gptk, pinned in
+app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift). Besides Wine it bundles
+third-party libraries, some under the GNU GPL (FFmpeg built with --enable-gpl
+--enable-version3, x264, x265, libdvdcss, libdvdread, libdvdnav), whose
+corresponding source neither dappermint/winecx-gptk nor Bridgeplay publishes. So
+Bridgeplay does not redistribute that archive: the app downloads it straight from
+dappermint/winecx-gptk's GitHub release on the user's Mac. Installers up to
+Bridgeplay 0.7.50 carried it, which is why it was taken out;
+those old installer downloads have been removed from the releases.
 
 Written offer for source code: the Corresponding Source of each binary above is
 the upstream source at the commit named above plus the patch or file named next
@@ -101,11 +126,13 @@ to it, all of which are public: winecx at https://github.com/dappermint/winecx,
 Wine 11.15 at https://dl.winehq.org/wine/source/11.x/, DXMT at
 https://github.com/3Shain/dxmt, DXVK-macOS at https://github.com/Gcenx/DXVK-macOS,
 and the patches in this repository (https://github.com/raymondchins/Bridgeplay).
-This offer covers every LGPL-licensed file Bridgeplay or its installer ships,
-including the unmodified WineCX runtime and DXMT above. For at least three years
-after the last release that ships them, Raymond Chin will also provide that source
-on request, for no more than the cost of providing it; open an issue at
-https://github.com/raymondchins/Bridgeplay/issues.
+This offer covers every LGPL- or GPL-licensed file Bridgeplay or its installer
+ships: the patched Wine files in the app (above) and DXMT. It also covers the
+WineCX runtime, including its GPL libraries, in the installers up to Bridgeplay
+0.7.50 that carried it. For at least
+three years after the last release that ships them, Raymond Chin will also
+provide that source on request, for no more than the cost of providing it; open
+an issue at https://github.com/raymondchins/Bridgeplay/issues.
 
 NotProton-WineHQ licensing
 ==========================
@@ -139,7 +166,7 @@ MIT licensed, see
 https://github.com/sparkle-project/Sparkle/blob/2.10.0/LICENSE
 
 The app's interface uses the Geist and Unbounded typefaces, bundled in
-app/Sources/BridgeplayApp/Resources/Fonts/ under the SIL Open Font License 1.1
+app/Sources/BridgeplayUI/Resources/Fonts/ under the SIL Open Font License 1.1
 (OFL-Geist.txt, OFL-Unbounded.txt there). Game covers shown in the app are read
 from the user's own Steam library cache or Steam's CDN at run time; none ship
 with Bridgeplay.
@@ -147,8 +174,15 @@ with Bridgeplay.
 /fonts/ contains the font sources from Valve's Proton repo. Fonts are licensed
 under their original licenses, see the LICENSE file in each folder. The build
 files from Proton are covered by LICENSE.fonts.
+The fonts built from them ship in the app, except the Chinese, Japanese and
+Korean ones (msyh, msyhbd, simsun and malgun from Source Han Sans, msgothic from
+Ume): Bridgeplay downloads those during setup from the fonts-cjk-* release of
+this repository, with their licences beside them in the archive.
 
-These third party files carry their original notices from the project authors:
+These third party files carry their original notices from the project authors.
+Their license texts ship in the app and the installer as LICENSE.jsoncpp
+(JsonCpp, compiled into steam.exe) and LICENSE.cjson (cJSON, compiled into
+notproton.dylib):
 
   steam-shim/jsoncpp.cpp             JsonCpp, public domain / MIT (header)
   steam-shim/json/json.h             JsonCpp, public domain / MIT (header)

@@ -116,7 +116,7 @@ launch() {
 			eval "$bridge_line"
 			for v in backend WINEDLLOVERRIDES WINEMSYNC msync_from NOTPROTON_RETINA NOTPROTON_FRAMEGEN \
 				NOTPROTON_FRAMEGEN_QUALITY NOTPROTON_FRAMEGEN_UI NOTPROTON_FRAMEGEN_FALLBACK NOTPROTON_FRAMEGEN_ENGINE CX_GRAPHICS_BACKEND \
-				DXVK_HUD VKD3D_CONFIG WINEDEBUG MTL_HUD_ENABLED D3DM_VENDOR_ID D3DM_DEVICE_ID D3DM_DEVICE_DESCRIPTION NOTPROTON_NGX_SIGNER NOTPROTON_DRIVER_VERSION CX_ACTIVE_GRAPHICS_BACKEND NOTPROTON_VSYNC gamefix_args; do
+				DXVK_HUD VKD3D_CONFIG WINEDEBUG MTL_HUD_ENABLED D3DM_VENDOR_ID D3DM_DEVICE_ID D3DM_DEVICE_DESCRIPTION NOTPROTON_NGX_SIGNER NOTPROTON_DRIVER_VERSION CX_ACTIVE_GRAPHICS_BACKEND NOTPROTON_VSYNC NOTPROTON_HIDE_WINE_EXPORTS CX_FWD_COMPAT_GL_CTX gamefix_args; do
 				eval "printf \"%s=%s\\n\" \$v \"\${$v-<unset>}\""
 			done
 		' launch "$target" > "$case_dir/out" 2>&1 || echo "launch exited $?" >> "$case_dir/out"
@@ -176,12 +176,13 @@ default_conf '# shipped fix' '' '  DXVK_HUD=fps  ' "VKD3D_CONFIG=dxr$(printf '\r
 	"DXMT_A=\$(touch $case_dir/pwned)" 'DXMT_B=`touch pwned`' 'DXMT_C="quoted"' "DXMT_D='single'" \
 	'BACKEND=vulkan' 'MSYNC=2' 'RETINA=yes' 'DLLOVERRIDES=dxgi=native' 'DLLOVERRIDES=;=n' \
 	'DXMT_=1' 'MTL_HUD_ENABLED=1' 'FRAMEGEN=4' 'FRAMEGEN_QUALITY=ultra' 'FRAMEGEN_UI=2' \
-	'FRAMEGEN_FALLBACK=yes' 'FRAMEGEN_ENGINE=fsr' 'FRAMEGEN_OTHER=1'
+	'FRAMEGEN_FALLBACK=yes' 'FRAMEGEN_ENGINE=fsr' 'FRAMEGEN_OTHER=1' 'CX_FWD_COMPAT_GL_CTX=1'
 launch waitforexitandrun "$case_dir/game/game.exe"
 is "a padded value is trimmed" "fps" "$(got DXVK_HUD)"
 is "a CRLF line ends cleanly" "dxr" "$(got VKD3D_CONFIG)"
 is "WINEDEBUG is allowed" "-all" "$(got WINEDEBUG)"
 is "MTL_HUD_ENABLED is allowed" "1" "$(got MTL_HUD_ENABLED)"
+is "CX_FWD_COMPAT_GL_CTX is allowed" "1" "$(got CX_FWD_COMPAT_GL_CTX)"
 is "PATH is not on the allow-list" "0" "$(grep -c '^PATH=/evil' "$case_dir/out" || true)"
 has "PATH is logged as rejected" "line 6 rejected PATH: not on the allow-list" "$case_dir/log"
 has "DYLD_INSERT_LIBRARIES is rejected" "rejected DYLD_INSERT_LIBRARIES: not on the allow-list" "$case_dir/log"
@@ -397,6 +398,9 @@ is "DLSS_FG=1 reports hardware scheduling for DLSS frame generation" "d3dmetal" 
 user_conf 'VSYNC=1'
 launch waitforexitandrun "$case_dir/game/game.exe"
 is "VSYNC=1 asks the overlay shim to keep the layer on display sync" "1" "$(got NOTPROTON_VSYNC)"
+user_conf 'HIDE_WINE_EXPORTS=1'
+launch waitforexitandrun "$case_dir/game/game.exe"
+is "HIDE_WINE_EXPORTS=1 hides ntdll's wine_* exports from GetProcAddress" "1" "$(got NOTPROTON_HIDE_WINE_EXPORTS)"
 user_conf 'NVAPI=1' 'BACKEND=dxmt'
 launch waitforexitandrun "$case_dir/game/game.exe"
 is "but not for dxmt" "d3d10core,d3d11,dxgi=n,b;d3d10,d3d12=b;nvapi64,nvngx=d;$trio" "$(got WINEDLLOVERRIDES)"
@@ -609,11 +613,11 @@ done
 echo "== the launcher receives the allow-listed variables"
 set --
 out=$(env -i PATH="$PATH" forward="$forward" VKD3D_CONFIG=dxr MVK_CONFIG_LOG_LEVEL=1 \
-	STAGING_SHARED_MEMORY=1 WINE_CPU_TOPOLOGY=4:0,1,2,3 WINE_LARGE_ADDRESS_AWARE=1 \
+	STAGING_SHARED_MEMORY=1 WINE_CPU_TOPOLOGY=4:0,1,2,3 WINE_LARGE_ADDRESS_AWARE=1 CX_FWD_COMPAT_GL_CTX=1 \
 	DXVK_HUD=fps NOTPROTON_FRAMEGEN=1 NOTPROTON_FRAMEGEN_QUALITY=quality NOTPROTON_FRAMEGEN_UI=0 \
 	NOTPROTON_FRAMEGEN_FALLBACK=0 NOTPROTON_FRAMEGEN_ENGINE=metalfx NOTPROTON_FRAMEGENX=1 NOTPROTON_UNRELATED=1 sh -c 'set --; eval "$forward"; printf "%s\n" "$@"' | grep -v '^--env$' | LC_ALL=C sort | tr '\n' ' ')
-is "VKD3D_, MVK_, STAGING_ and WINE_ topology variables are forwarded" \
-	"DXVK_HUD=fps MVK_CONFIG_LOG_LEVEL=1 NOTPROTON_FRAMEGEN=1 NOTPROTON_FRAMEGEN_ENGINE=metalfx NOTPROTON_FRAMEGEN_FALLBACK=0 NOTPROTON_FRAMEGEN_QUALITY=quality NOTPROTON_FRAMEGEN_UI=0 STAGING_SHARED_MEMORY=1 VKD3D_CONFIG=dxr WINE_CPU_TOPOLOGY=4:0,1,2,3 WINE_LARGE_ADDRESS_AWARE=1 " "$out"
+is "VKD3D_, MVK_, STAGING_, WINE_ topology and CX_FWD_COMPAT_GL_CTX variables are forwarded" \
+	"CX_FWD_COMPAT_GL_CTX=1 DXVK_HUD=fps MVK_CONFIG_LOG_LEVEL=1 NOTPROTON_FRAMEGEN=1 NOTPROTON_FRAMEGEN_ENGINE=metalfx NOTPROTON_FRAMEGEN_FALLBACK=0 NOTPROTON_FRAMEGEN_QUALITY=quality NOTPROTON_FRAMEGEN_UI=0 STAGING_SHARED_MEMORY=1 VKD3D_CONFIG=dxr WINE_CPU_TOPOLOGY=4:0,1,2,3 WINE_LARGE_ADDRESS_AWARE=1 " "$out"
 
 echo "== the wineserver directory self-heal"
 heal=$(sed -n '/^heal_wine_tmp() {$/,/^}$/p' "$SRC")
@@ -651,6 +655,40 @@ run_heal
 is "a file is left alone" "644" "$(stat -f %Lp "$wine_dir")"
 has "and is warned about" "is not a directory (Regular File), left alone" "$heal_log"
 rm "$wine_dir"
+
+echo "== layers: shipped and user defaults for every game"
+new_case
+full_engine
+global_conf() { printf '%s\n' "$@" > "$case_dir/support/gamefixes-default/default.conf"; }
+user_global_conf() { printf '%s\n' "$@" > "$case_dir/support/gamefixes/default.conf"; }
+global_conf 'BACKEND=dxvk' 'RETINA=1' 'WINEDEBUG=-all' 'FRAMEGEN=2'
+user_global_conf 'RETINA=0' 'FRAMEGEN=adaptive'
+default_conf 'FRAMEGEN=3'
+launch waitforexitandrun "$case_dir/game/game.exe"
+is "the shipped global conf applies" "dxvk" "$(got backend)"
+is "the shipped global conf exports" "-all" "$(got WINEDEBUG)"
+is "the user's global conf wins over the shipped one" "0" "$(got NOTPROTON_RETINA)"
+is "a shipped per-game conf wins over both global confs" "3" "$(got NOTPROTON_FRAMEGEN)"
+has "the shipped global conf is read first" "reading the shipped-global conf" "$case_dir/log"
+has "the log names the shipped global layer" "BACKEND in the shipped-global conf" "$case_dir/log"
+has "the log names the user's global layer" "applied NOTPROTON_RETINA=0 from the global conf" "$case_dir/log"
+
+new_case
+full_engine
+global_conf 'BACKEND=dxvk' 'RETINA=1'
+user_global_conf 'MTL_HUD_ENABLED=1'
+user_conf 'BACKEND=dxmt'
+launch waitforexitandrun "$case_dir/game/game.exe" BRIDGEPLAY_RETINA=0 MTL_HUD_ENABLED=0
+is "a user per-game conf wins over the global confs" "dxmt" "$(got backend)"
+is "launch options win over the shipped global conf" "0" "$(got NOTPROTON_RETINA)"
+is "launch options win over the user's global conf" "0" "$(got MTL_HUD_ENABLED)"
+
+new_case
+full_engine
+user_global_conf 'BACKEND=d3dmetal'
+launch waitforexitandrun "$case_dir/game/game.exe"
+is "a global d3dmetal on an engine without it falls back" "dxmt" "$(got backend)"
+has "the fallback names the global layer" "BACKEND in the global conf, fell back from d3dmetal" "$case_dir/log"
 
 if [ "$fails" -eq 0 ]; then
 	echo "==> gamefixescheck: all assertions hold"

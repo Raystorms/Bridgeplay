@@ -4,15 +4,17 @@
 #   scripts/package-installer.sh [--fingerprint-only]
 #
 # The installer carries no app: Install.command downloads the latest Bridgeplay.zip from
-# the GitHub releases, so the zip only changes with the engines, GPTK, the configs or the
-# installer itself, and release-local.sh uploads it only then. --fingerprint-only runs
+# the GitHub releases, so the zip only changes with the DXMT/DXVK archives, GPTK, the
+# configs or the installer itself, and release-local.sh uploads it only then. --fingerprint-only runs
 # every check and prints that fingerprint without writing the zip.
 #
-# Takes the engine archives from this Mac's engine cache,
-# Apple's Game Porting Toolkit from this Mac's support folder, and installer/ plus the
-# licence files from the repository. Engine archives are checked against the pins in
-# FreeEngine*.swift. Nothing else from the cache is shipped: Valve's packages and Steam
-# itself are downloaded on the user's Mac from Valve. GPTK is never committed.
+# Takes the DXMT and DXVK archives from this Mac's engine cache, Apple's Game Porting
+# Toolkit from this Mac's support folder, and installer/ plus the licence files from the
+# repository. The archives are checked against the pins in FreeEngine.swift. Nothing else
+# from the cache is shipped. The WineCX runtime (dappermint/winecx-gptk's Libraries.tar.gz)
+# is not: it bundles GPL libraries (FFmpeg, x264, x265, libdvd*) whose source neither
+# project publishes, so the app downloads it from dappermint on the user's Mac. Valve's
+# packages and Steam itself are downloaded from Valve. GPTK is never committed.
 #
 # Overridable: ENGINE_CACHE (default
 # ~/Library/Caches/bridgeplay), GPTK_DIR (default ~/Library/Application Support/bridgeplay/gptk).
@@ -66,23 +68,14 @@ need_file() {
 
 # --- engine archives, from the pins -----------------------------------------------
 
-winecx_swift=$models/FreeEngineWinecx.swift
 engine_swift=$models/FreeEngine.swift
-current=$(sed -n 's/^ *static let current = \(v[0-9]*\)$/\1/p' "$winecx_swift")
-[ -n "$current" ] || die "cannot find FreeEngineWinecx.current in $winecx_swift"
-runtime=$(pin_after "$winecx_swift" "static let $current = WinecxRelease(" runtime)
-winecx_archive=$(pin_after "$winecx_swift" "static let $current = WinecxRelease(" archive)
-winecx_sha=$(pin_after "$winecx_swift" "static let $current = WinecxRelease(" sha256)
 dxmt_archive=$(pin_after "$engine_swift" "static let dxmt = RendererRelease(" archive)
 dxmt_sha=$(pin_after "$engine_swift" "static let dxmt = RendererRelease(" sha256)
 dxvk_archive=$(pin_after "$engine_swift" "dxvk: BackendRelease(" archive)
 dxvk_sha=$(pin_after "$engine_swift" "dxvk: BackendRelease(" sha256)
-[ -n "$runtime" ] && [ -n "$winecx_archive" ] && [ -n "$dxmt_archive" ] && [ -n "$dxvk_archive" ] \
-	|| die "cannot read the engine pins from $models"
+[ -n "$dxmt_archive" ] && [ -n "$dxvk_archive" ] || die "cannot read the engine pins from $engine_swift"
 
-winecx_rel=engines/winecx-$runtime/$winecx_archive
 echo "==> checking engine archives in $ENGINE_CACHE against the pins"
-need_file "$ENGINE_CACHE/$winecx_rel" "$winecx_sha"
 need_file "$ENGINE_CACHE/engines/$dxmt_archive" "$dxmt_sha"
 need_file "$ENGINE_CACHE/engines/$dxvk_archive" "$dxvk_sha"
 
@@ -115,17 +108,17 @@ done <"$gptk_list"
 
 # --- gamefixes --------------------------------------------------------------------
 
-# Per-game confs come from gamefixes/, the same files the app ships into
-# gamefixes-default/, so the installer can never carry a divergent copy. default.conf (the
-# global file in the user's gamefixes/) is installer-only and lives in installer/config/.
+# The confs come from gamefixes/, the same files the app ships into gamefixes-default/, so
+# the installer can never carry a divergent copy. default.conf there is Bridgeplay's
+# defaults for every game; the user's own gamefixes/default.conf is never shipped.
 ls gamefixes/*.conf >/dev/null 2>&1 || die "no gamefixes/*.conf in the repository"
-[ -s installer/config/gamefixes/default.conf ] || die "missing installer/config/gamefixes/default.conf"
+[ -s gamefixes/default.conf ] || die "missing gamefixes/default.conf"
 
 # --- stage ------------------------------------------------------------------------
 
 echo "==> staging $stage"
 rm -rf "$stage_root" "$zip"
-mkdir -p "$stage/cache/engines/winecx-$runtime"
+mkdir -p "$stage/cache/engines"
 
 cp installer/Install.command "installer/BACA DULU.txt" installer/README.txt "$stage/"
 chmod 755 "$stage/Install.command"
@@ -137,12 +130,14 @@ cp "$GPTK_DIR/License.rtf" "$stage/GPTK-License.rtf"
 rsync -a --exclude .DS_Store installer/config/ "$stage/config/"
 mkdir -p "$stage/config/gamefixes-default"
 cp gamefixes/*.conf "$stage/config/gamefixes-default/"
-rsync -a --exclude .DS_Store "$GPTK_DIR/" "$stage/gptk/"
-cp "$ENGINE_CACHE/$winecx_rel" "$stage/cache/$winecx_rel"
+# SOURCE.txt is Bridgeplay's own note of where this Mac's copy came from, not Apple's.
+rsync -a --exclude .DS_Store --exclude SOURCE.txt "$GPTK_DIR/" "$stage/gptk/"
 cp "$ENGINE_CACHE/engines/$dxmt_archive" "$ENGINE_CACHE/engines/$dxvk_archive" "$stage/cache/engines/"
 
 # Valve's software is downloaded from Valve on the user's Mac, never shipped.
+# Nor is the WineCX runtime, which the app downloads from dappermint (see the top).
 unwanted=$(find "$stage" \( -name valve-packages -o -name 'steam.dmg' -o -name 'Steam.app' \
+	-o -name 'winecx-*' -o -name 'Libraries.tar.gz' \
 	-o -name '*.p12' -o -name '*.pem' -o -name '*.key' -o -name '.env*' \) -print)
 [ -z "$unwanted" ] || die "refusing to ship: $unwanted"
 

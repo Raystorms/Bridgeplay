@@ -31,7 +31,9 @@ Compared with the WineHQ 11.15 engine it adds:
   round trips that slow down CPU-heavy games.
 - **D3DMetal support** through CrossOver's hooks (winemac `macdrv_functions`, the
   `libd3dshared` non-native code regions in ntdll, and the d3dkmt answers). This only works
-  with a Game Porting Toolkit you install yourself. Bridgeplay never downloads or ships it.
+  with Apple's Game Porting Toolkit: the one-click installer ships its redistributables
+  under Apple's non-commercial license ([GPTK-LICENSE.md](GPTK-LICENSE.md)). The app links
+  that copy or one you install yourself, and never downloads it.
 - **DXMT master and DXVK-macOS 1.10.3** as backends a game opts into. DXMT is the same
   `e94c312` build as the WineHQ engine ([DXMT.md](DXMT.md)), not the archive's 0.80. The
   builtin Direct3D is Wine's own, or D3DMetal once a Game Porting Toolkit is linked.
@@ -98,6 +100,8 @@ lib/wine/x86_64-unix/winemac.so                   Retina fix, replacing the arch
 lib/wine/x86_64-unix/winebus.so                   built with SDL2, replacing the archive's (Controllers)
 lib/wine/x86_64-windows/winebus.sys               11.17 only: map-key fix, replacing the archive's (Controllers)
 lib/wine/x86_64-windows/ws2_32.dll                11.17 only: own host name without loopback, replacing the archive's (Own host name)
+lib/wine/x86_64-windows/kernel{32,base}.dll       11.17 only: GetProcAddress can hide ntdll's wine_* exports, replacing the archive's (Hidden Wine exports)
+lib/wine/{x86_64,i386}-windows/d3dx11_4{2,3}.dll  11.17 only: D3DX11CreateThreadPump stub, replacing the archive's (D3DX11 thread pump)
 lib/libSDL2-2.0.0.dylib                           SDL 2.32.10, x86_64, for winebus.so (Controllers)
 ```
 
@@ -203,6 +207,43 @@ gcc 16.2, `make dlls/ws2_32/x86_64-windows/ws2_32.dll`), then
 is byte-identical to the runtime's `ws2_32.dll`; only the PE timestamp, checksum and build id
 differ, and the runtime's `.eh_frame` section name is cut to `.eh_fram` (10 bytes of string
 table). 11.15 keeps the runtime's own `ws2_32.dll`, so it still answers loopback first.
+
+## Hidden Wine exports
+
+Some games turn features off once `GetProcAddress(ntdll, "wine_get_version")` answers. The
+Witcher 3 5.0 then never calls `slInit`: Streamline logs only `SL not initialized or no plugins
+found` and the game offers FSR and XeSS but no DLSS. Wine Staging's `HideWineExports` covers
+this; WineCX has no equivalent.
+
+11.17 ships `kernel32-winecx-11.17.dll` and `kernelbase-winecx-11.17.dll` as
+`lib/wine/x86_64-windows/kernel32.dll` and `kernelbase.dll`: winecx `e0aa380`'s PE halves with
+`hide-wine-exports-patch/winecx-hide-wine-exports.patch`. With `NOTPROTON_HIDE_WINE_EXPORTS`
+set (gamefix key `HIDE_WINE_EXPORTS=1`), both `GetProcAddress` copies fail a lookup by name of
+an ntdll export starting with `wine_`. `__wine_*` stays, since every builtin's
+`__wine_init_unix_call` needs it. Without the variable they behave as the runtime's.
+Built and pinned as in `hide-wine-exports-patch/README.md`; the pins are the release's
+`loader`. 11.15 keeps the runtime's own.
+
+## D3DX11 thread pump
+
+Wine's `d3dx11_43` and `d3dx11_42` declare `D3DX11CreateThreadPump` as a spec stub, so a game
+that imports it (Persona 4 Golden) dies at the first call with
+`unimplemented function d3dx11_43.dll.D3DX11CreateThreadPump` (Wine bug 56176). Wine master
+still has the stub (checked 2026-10-22); MR 6654 (closed, not merged) added an `E_NOTIMPL`
+stub, MR 5357 (open) a fuller thread pump.
+
+11.17 ships `d3dx11_43-winecx-11.17{,-i386}.dll` and `d3dx11_42-winecx-11.17{,-i386}.dll` as
+`lib/wine/{x86_64,i386}-windows/d3dx11_4{3,2}.dll`: winecx `e0aa380`'s PE halves with
+`d3dx11-patch/winecx-create-thread-pump.patch`, MR 6654's change, which returns `E_NOTIMPL`.
+`d3dx11_42` forwards to `d3dx11_43` (`-import`), so both are rebuilt and ship together. The
+pins are the release's `d3dx`.
+
+Built in a tree configured as in `winemac-patch/README.md` but with
+`--enable-archs=i386,x86_64` (mingw-w64 gcc 16.2 for both), brew's bison on `PATH` for `make`
+too, `make dlls/d3dx11_4{3,2}/{x86_64,i386}-windows/d3dx11_4{3,2}.dll`, then
+`{x86_64,i686}-w64-mingw32-strip --strip-debug`. Built without the patch, every section of
+all four is byte-identical to the runtime's; only the build id differs and the runtime's
+`.eh_frame` name is cut to `.eh_fram`. 11.15 keeps the runtime's own.
 
 ## D3DMetal: the builtin model
 
@@ -344,7 +385,8 @@ python3 resolve.py ../Libraries/Wine          # self-tests against PINNED
 python3 apply.py <ntdll.dll> <out> <detour bin>   # patched hashes
 ```
 
-4.7.3 (`winecx-11.17`): both detours fit in `.text` padding.
+4.7.3 (`winecx-11.17`): both detours fit in `.text` padding. The detour payloads and
+every other shipped file are in [Shipped binaries](#shipped-binaries).
 
 | Pin | sha256 |
 |---|---|
@@ -352,13 +394,7 @@ python3 apply.py <ntdll.dll> <out> <detour bin>   # patched hashes
 | clean x86_64 ntdll | `8b32c9f6f71b4f15fcaccb19b0f2adab9391ae73ad539cae9e136f8ee7d24128` |
 | patched x86_64 ntdll | `4573d521671a48212670e7543aa9ebf0921e383dada69477f677f435df2bef5a` |
 | clean i386 ntdll | `cc8a9035cea0e26c5d333ef220f1becefc27ae44d2cdcdaea3278e8739d26fd9` |
-| patched i386 ntdll | `8ad83740df2da5e79ed435e4bc57e82b4b6a4b984fbec73e1160ca81dfce1b44` |
-| `detour2-winecx-11.17.bin` | `e1bbd185b19de3e23d627ae3a8bf25ed1b767bff5690102c5312a5ed3813e736` |
-| `detour32-winecx-11.17.bin` | `0676104e0bd56c4a1e8c473d9cbcd21fb2ba105fc7dc6cf5a70d37692c129e28` |
-| `winemac-winecx-11.17.so` | `aa192f846ad15d56de200fc92752eaf2d455700846ae2cf1ccc7b27b535f1c00` |
-| `winebus-winecx-11.17.so` | `6223c035c824c90708abbc3e733f8d1d6ed6b8b4e9a3e1a5c813493ceba50473` |
-| `winebus-winecx-11.17.sys` | `da108d1c3788fa32807ef08c4d26d8a89812c230317ffa7ba5111e126bda607c` |
-| `ws2_32-winecx-11.17.dll` | `cb0a5670ce6dbf949ed25cca54e9f1c4930cd4c2ade895836d518d3d9073079c` |
+| patched i386 ntdll | `628d08854dc42009f63dc489005c2a49a3f1fe4c6a949dc1ac505915004e5b70` |
 
 4.5.125 (`winecx-11.15`):
 
@@ -369,9 +405,71 @@ python3 apply.py <ntdll.dll> <out> <detour bin>   # patched hashes
 | patched x86_64 ntdll | `4efd956e573726777827cddaa89ef3b7f72d6cfd7b8e2049e41f5f5bdf4a6306` |
 | clean i386 ntdll | `e1b208073c804a443e64ada577899d96a5c8eaee435813e4a30e0d143bca6e3c` |
 | patched i386 ntdll | `23ee72664f172d38d76ecb8969d5c5af7e6828864dfe298338ed0e773910bc5d` |
-| `detour2-winecx-11.15.bin` | `fde56854b9a7a32da19babe2427d19ff6a6b83de1917fe8d32aaddd2991fc6b9` |
-| `detour32-winecx-11.15.bin` | `37daf5f795535df91bc8fcbd356f22f4fd1ab379ec4acc97ddff44037d265556` |
 
 The unpack test (`FreeEngineWinecxTests.unpacksRealArchive`, once per release) checks all of
 this against the real archive when `NOTPROTON_WINECX_ARCHIVE` points at it, or when it sits in
 Bridgeplay's download cache.
+
+## Shipped binaries
+
+Every binary in `app/Sources/BridgeplayApp/Resources/` built from a patch or source in this
+repository, with the sha256 of the committed file, which must equal the Swift pin in the last
+column. Build recipes are in the sections above and in each patch folder's README.
+
+The Mach-O files (`.so`, `.dylib`) are committed signed ad hoc. A release re-signs them with
+the Developer ID so Apple notarizes the app (see [RELEASING.md](RELEASING.md), Signing), which
+changes their bytes but not their code. `SignedPin.swift` maps each sha256 below to the hash
+of the file without its signature, so both copies, and engines laid out by either, pass. A
+rebuilt Mach-O file needs its line there updated too; `SignedPinTests` fails until it is.
+
+| File | Built from | sha256 | Pinned in |
+|---|---|---|---|
+| `crypt32-winecx-11.17.dll` | `ngx-signer-patch/` | `27b485cc2a6bf651d8d72173e5d40dbc914666d3f8e8f6a4031a91c5ff22ebbf` | `FreeEngineWinecx.v1117.nvidia` |
+| `wintrust-winecx-11.17.dll` | `ngx-signer-patch/` | `256f3b7106cb8f7f390e1551f209bfb72ccf43744d6d583e5664e44d7602bfee` | `FreeEngineWinecx.v1117.nvidia` |
+| `nvapi64-shim.dll` | `nvapi-shim/` | `a80aea6347a8b1e72542e458f410d37fdedb39e194c0fcee45a5ae6cd7f571be` | `FreeEngineWinecx.v1117.nvidia` |
+| `win32u-winecx-11.17.so` | `win32u-patch/patch-driver-version.sh` | `b012382d09b2ff1b3c0750d93867f72dd04a7c902bc4179be406b6c558ab162d` | `FreeEngineWinecx.v1117.nvidia` |
+| `wined3d-winecx-11.17.dll` | `wined3d-patch/` | `9298c83d927b3b80d0fa36f52bb5f2ecd60ec4daffff3c93d9b080293e59dfe9` | `FreeEngineWinecx.v1117.nvidia` |
+| `winecoreaudio-winecx-11.17.so` | `winecoreaudio-patch/` | `680b267e8cf41af0868de4adf7f6760615a434a4be06b4ab0cfeece2d9240faa` | `FreeEngineWinecx.v1117.audio` |
+| `ws2_32-winecx-11.17.dll` | `ws2_32-patch/` | `cb0a5670ce6dbf949ed25cca54e9f1c4930cd4c2ade895836d518d3d9073079c` | `FreeEngineWinecx.v1117.network` |
+| `kernel32-winecx-11.17.dll` | `hide-wine-exports-patch/` | `9cffe153abd3f91f7157f936377baac47c5aef9fa807e263a0f9e051c6010af3` | `FreeEngineWinecx.v1117.loader` |
+| `kernelbase-winecx-11.17.dll` | `hide-wine-exports-patch/` | `4d55600b204724046567688ca96132e49e53af1baac7a362f3e2bf285f669a8a` | `FreeEngineWinecx.v1117.loader` |
+| `d3dx11_43-winecx-11.17.dll` | `d3dx11-patch/` | `7d23cdfacc922f67dfa2eba98df277ae2ae351ad3646c3191a84966b55dbbfd3` | `FreeEngineWinecx.v1117.d3dx` |
+| `d3dx11_43-winecx-11.17-i386.dll` | `d3dx11-patch/` | `dd4dd351f2a5880c9848d5ccf4944a0b5e7622bb7fb196544115b1f9c92d749c` | `FreeEngineWinecx.v1117.d3dx` |
+| `d3dx11_42-winecx-11.17.dll` | `d3dx11-patch/` | `3d97e1de9000a78e27eb5c90d0ab9b36d54fd350760063da27226d22c90c8e1b` | `FreeEngineWinecx.v1117.d3dx` |
+| `d3dx11_42-winecx-11.17-i386.dll` | `d3dx11-patch/` | `85075f8b4f30f1a993238a0d6ab772a3a3df6c031e87ee9401c4367a527cd57c` | `FreeEngineWinecx.v1117.d3dx` |
+| `winemac-winecx-11.17.so` | `winemac-patch/winecx-11.17-d3dmetal-retina.patch` | `aa192f846ad15d56de200fc92752eaf2d455700846ae2cf1ccc7b27b535f1c00` | `FreeEngineWinecx.v1117.macDriver` |
+| `winebus-winecx-11.17.so` | Controllers (SDL2 build) | `6223c035c824c90708abbc3e733f8d1d6ed6b8b4e9a3e1a5c813493ceba50473` | `FreeEngineWinecx.v1117.gamepad` |
+| `winebus-winecx-11.17.sys` | `winebus-patch/` | `da108d1c3788fa32807ef08c4d26d8a89812c230317ffa7ba5111e126bda607c` | `FreeEngineWinecx.v1117.gamepad` |
+| `winemac-winecx-11.15.so` | `winemac-patch/winecx-d3dmetal-retina.patch` | `76d8f93839386f37e8badf0c82bb31b5ead22ac580f17896f9d2a729af0fc147` | `FreeEngineWinecx.v1115.macDriver` |
+| `winebus-winecx-11.15.so` | Controllers (SDL2 build) | `1bc53184f5d026ab84a26cf6ef721348fc3b028c019ff969e69eb6cf9b9d1af9` | `FreeEngineWinecx.v1115.gamepad` |
+| `libSDL2-2.0.0.dylib` | SDL 2.32.10, `winemac-patch/sdl2-iokit-gamepad-collection.patch` | `aeeec088bf51f9eac0dbd8e26ae994c7b8568fb42fc676835d6dc2109fc559d1` | `FreeEngineWinecx` `sdl` (both releases) |
+| `winemac-winehq-11.15.so` | `winemac-patch/dxmt_export.c` | `d95fe40b6321ba8a34933a6b394af6d75547220a7168896c357af3a32377b08f` | `FreeEngine` `macDriver` |
+| `detour2-41069.bin` | `ntdll-patch/build.sh` (41069) | `660ea7c935620e620a45a46e552c0a3de9292e031bf93ef676968154d45e78d5` | `NtdllPatcher.byBuild` |
+| `detour2-41073.bin` | `ntdll-patch/build.sh` (41073) | `971c9c8c0f5a9fc7338fb5012a88f8a5297924e48cadb0aa0fa827cce0984a6e` | `NtdllPatcher.byBuild` |
+| `detour2-cx26.bin` | `ntdll-patch/build.sh` (cx26) | `e35b834408599c45f30b23a6d2bf38acfa5c3df4d15206617c471e23a4a01bfb` | `NtdllPatcher.byBuild` |
+| `detour2-fex-41069.bin` | `ntdll-patch/build.sh` (fex-41069) | `0084bba1d7399e749d918dba4f313f1dc1825d2a487f3169b469b57c5b161ca5` | `NtdllPatcher.byBuild` |
+| `detour2-fex-41073.bin` | `ntdll-patch/build.sh` (fex-41073) | `d3b922ad4eae11d9a95cdab1276546af08bd3b28e041427ea0ebc557b094ad32` | `NtdllPatcher.byBuild` |
+| `detour2-fex.bin` | `ntdll-patch/build.sh` (fex) | `6af3f36658907cc94c096e432006807d6997bd970560f2579df748d6fd6e2bc6` | `NtdllPatcher.byBuild` |
+| `detour2-winecx-11.15.bin` | `ntdll-patch/build.sh` (winecx-11.15) | `fde56854b9a7a32da19babe2427d19ff6a6b83de1917fe8d32aaddd2991fc6b9` | `FreeEngineWinecx.v1115.ntdllPatches` |
+| `detour2-winecx-11.17.bin` | `ntdll-patch/build.sh` (winecx-11.17) | `e1bbd185b19de3e23d627ae3a8bf25ed1b767bff5690102c5312a5ed3813e736` | `FreeEngineWinecx.v1117.ntdllPatches` |
+| `detour2-winehq-11.15.bin` | `ntdll-patch/build.sh` (winehq-11.15) | `d394a6b7f4c55e2bb8b99aeb51cd4555527f8e10fa49339e95a8156486c5e2e5` | `NtdllPatcher.byBuild` |
+| `detour2.bin` | `ntdll-patch/build.sh` (rosetta) | `8504714bba0195439cb5b44c89f25c68dbb7f01bae6f72ca0a258a0daec3e244` | `NtdllPatcher.byBuild` |
+| `detour32-41069.bin` | `ntdll-patch/build32.sh` (41069) | `3eaa5021add0c8e30e324d6b1a6392a32720f5f73596418a2086b7f8081eb1bd` | `NtdllPatcher.byBuild` |
+| `detour32-41073.bin` | `ntdll-patch/build32.sh` (41073) | `693d6b8ac801c5697dc7d86aeb4f23fbfb1fd08bb3f949ad3e4b2311cd28348a` | `NtdllPatcher.byBuild` |
+| `detour32-cx26.bin` | `ntdll-patch/build32.sh` (cx26) | `be465bc936cafafae4aa1b4c41f668e08848492d9858c2cf2ad483a9f1ab25e5` | `NtdllPatcher.byBuild` |
+| `detour32-fex-41069.bin` | `ntdll-patch/build32.sh` (fex-41069) | `6ff6c7289e639c4caad85c2670bfa849d9f36baa24152b6979896caede5e249b` | `NtdllPatcher.byBuild` |
+| `detour32-fex-41073.bin` | `ntdll-patch/build32.sh` (fex-41073) | `e0b3a73bb287ecdebe7a9516a732b60e8de95fa0a756ae5ea4c5bd46e4a807c2` | `NtdllPatcher.byBuild` |
+| `detour32-fex.bin` | `ntdll-patch/build32.sh` (fex) | `b4c697ba396ecb59125c505666ad3465d1208b8a1e3e53a0c457657b341376b9` | `NtdllPatcher.byBuild` |
+| `detour32-winecx-11.15.bin` | `ntdll-patch/build32.sh` (winecx-11.15) | `37daf5f795535df91bc8fcbd356f22f4fd1ab379ec4acc97ddff44037d265556` | `FreeEngineWinecx.v1115.ntdllPatches` |
+| `detour32-winecx-11.17.bin` | `ntdll-patch/build32.sh` (winecx-11.17) | `085df281ffe81c2803f44dd30df885248e5510c8560f0f20a5ae36e8446f7559` | `FreeEngineWinecx.v1117.ntdllPatches` |
+| `detour32-winehq-11.15.bin` | `ntdll-patch/build32.sh` (winehq-11.15) | `527431a3a74e9dff7bc3582277ddfa7b44bcac6fba285c028fd2c94fd9202418` | `NtdllPatcher.byBuild` |
+| `detour32.bin` | `ntdll-patch/build32.sh` (rosetta) | `2758d4f6783c853c460187f83f4fb9b1105380d194126ef83fc85e2596d3036a` | `NtdllPatcher.byBuild` |
+| `detour64-fex-41069.bin` | `ntdll-patch/build64.sh` (fex-41069) | `b27484eaed592366ddd3a5b3c565c2dc05e8fa255fbd7e19d9d8eb619ff57c23` | `NtdllPatcher.byBuild` |
+| `detour64-fex-41073.bin` | `ntdll-patch/build64.sh` (fex-41073) | `8a6fe80587815393059cb2cecfdc542b666c158e147560875ff19f37221726d2` | `NtdllPatcher.byBuild` |
+| `detour64-fex.bin` | `ntdll-patch/build64.sh` (fex) | `68a458ec9c32041c79fdd622d18e91cfbe825a5292cae362d310930e34dd598e` | `NtdllPatcher.byBuild` |
+
+`detour32-winehq-11.15.bin` and `detour2-winecx-11.17.bin` rebuild byte for byte from the
+current sources (checked 2026-10-24). `detour2-winehq-11.15.bin` does not: it was built from
+`detour.c` before 160968c and still jumps to lsteamclient's DllMain, while the current source
+gives an 832-byte payload (`dc4d86de…`) that skips it, like the other engines. It stays until a
+WineHQ x86_64 game has been tested with the rebuilt payload.

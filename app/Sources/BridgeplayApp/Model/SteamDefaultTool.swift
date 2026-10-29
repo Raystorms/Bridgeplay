@@ -38,12 +38,7 @@ enum SteamDefaultTool {
         steamRunning: () -> Bool = { SteamBundle.isRunningForThisUser }
     ) throws {
         guard !steamRunning() else { throw SteamRunning() }
-        guard let text = try? String(contentsOf: file, encoding: .utf8) else {
-            throw StepFailure(step: step, detail: "Steam has no config.vdf yet. Open Steam once, log in, quit it and run this again.")
-        }
-        guard let result = updated(text, tool: tool) else {
-            throw StepFailure(step: step, detail: "config.vdf has no InstallConfigStore > Software > Valve > Steam section.")
-        }
+        let (text, result) = try planned(tool, in: file)
         guard result != text else { return }
         // A default that is already one of ours is not the user's, so the backup taken when
         // Bridgeplay first replaced theirs is kept.
@@ -53,6 +48,24 @@ enum SteamDefaultTool {
             try JSONEncoder().encode(Backup(previous: previous)).write(to: backup, options: .atomic)
         }
         try result.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    // Whether set() would write, so a caller can leave Steam open when it would not. A new
+    // Steam may write config.vdf only when it quits, so a missing one counts as a change.
+    static func needsChange(to tool: String, in file: URL = config) throws -> Bool {
+        guard FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) else { return true }
+        let (text, result) = try planned(tool, in: file)
+        return result != text
+    }
+
+    private static func planned(_ tool: String, in file: URL) throws -> (text: String, result: String) {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+            throw StepFailure(step: step, detail: "Steam has no config.vdf yet. Open Steam once, log in, quit it and run this again.")
+        }
+        guard let result = updated(text, tool: tool) else {
+            throw StepFailure(step: step, detail: "config.vdf has no InstallConfigStore > Software > Valve > Steam section.")
+        }
+        return (text, result)
     }
 
     // Puts back what set() replaced when the default is still one of Bridgeplay's tools: the
@@ -69,6 +82,46 @@ enum SteamDefaultTool {
         guard !steamRunning() else { throw SteamRunning() }
         let saved = (try? Data(contentsOf: backup)).flatMap { try? JSONDecoder().decode(Backup.self, from: $0) }
         guard let result = replacingDefault(text, with: saved?.previous), result != text else { return false }
+        try WriteRefused.catching(file) { try result.write(to: file, atomically: true, encoding: .utf8) }
+        return true
+    }
+
+    // Removes the per-game entries under CompatToolMapping whose tool is one of Bridgeplay's
+    // (the "0" default is restore()'s). nil when there is nothing to remove.
+    static func removingOurGameEntries(_ text: String) -> String? {
+        var lines = text.components(separatedBy: "\n")
+        guard let mapping = keyLine(lines, "CompatToolMapping", from: 0),
+              let open = openBrace(lines, after: mapping), let close = closeBrace(lines, open: open)
+        else { return nil }
+        let depth = indent(lines[mapping]) + 1
+        var ranges: [ClosedRange<Int>] = []
+        var index = open + 1
+        while index < close {
+            guard indent(lines[index]) == depth, key(lines[index]) != nil,
+                  let entryOpen = openBrace(lines, after: index), let entryClose = closeBrace(lines, open: entryOpen)
+            else { index += 1; continue }
+            if key(lines[index]) != "0", lines[entryOpen + 1 ..< entryClose].contains(where: {
+                guard let (field, value, _) = BrandMigration.keyValue($0) else { return false }
+                return field.lowercased() == "name" && ToolName.isOurs(value)
+            }) { ranges.append(index ... entryClose) }
+            index = entryClose + 1
+        }
+        guard !ranges.isEmpty else { return nil }
+        for range in ranges.reversed() { lines.removeSubrange(range) }
+        return lines.joined(separator: "\n")
+    }
+
+    // Removes Bridgeplay's per-game tool choices from config.vdf, so no game is left naming a
+    // deleted tool. Refused while Steam runs. Returns whether it wrote.
+    @discardableResult
+    static func removeGameEntries(
+        in file: URL = config,
+        steamRunning: () -> Bool = { SteamBundle.isRunningForThisUser }
+    ) throws -> Bool {
+        guard let text = try? String(contentsOf: file, encoding: .utf8),
+              let result = removingOurGameEntries(text)
+        else { return false }
+        guard !steamRunning() else { throw SteamRunning() }
         try WriteRefused.catching(file) { try result.write(to: file, atomically: true, encoding: .utf8) }
         return true
     }

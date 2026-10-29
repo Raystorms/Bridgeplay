@@ -2,6 +2,14 @@
 
 import Foundation
 
+// What the Compatibility page shows while a rebuild runs. The raw values are what
+// notproton-rebuild holds, which the dylib reads.
+enum RebuildPhase: String {
+    case settingUp = "setup"
+    case copying = "copy"
+    case finishing = "finish"
+}
+
 extension PrefixTools {
     @discardableResult
     static func recreate(
@@ -9,14 +17,14 @@ extension PrefixTools {
         as tool: InstalledTool,
         runners: URL = SupportPaths.runners,
         now: Date = .now,
-        keepBackup: Bool = true
+        keepBackup: Bool = true,
+        progress: (RebuildPhase) -> Void = { _ in }
     ) throws -> URL? {
-        let kept = try recreate(
+        try rebuild(
             prefix, runner: SupportPaths.clonedRoot(forBuild: tool.build, runners: runners),
-            flavor: tool.tool.flavor, now: now, keepBackup: keepBackup
+            flavor: tool.tool.flavor, now: now, keepBackup: keepBackup, record: tool,
+            progress: progress
         )
-        try writeBuildRecord(tool, for: prefix)
-        return kept
     }
 
     @discardableResult
@@ -26,6 +34,14 @@ extension PrefixTools {
         flavor: CompatTool.Flavor = .fex,
         now: Date = .now,
         keepBackup: Bool = true
+    ) throws -> URL? {
+        try rebuild(prefix, runner: runner, flavor: flavor, now: now, keepBackup: keepBackup)
+    }
+
+    private static func rebuild(
+        _ prefix: WinePrefix, runner: URL, flavor: CompatTool.Flavor,
+        now: Date, keepBackup: Bool, record: InstalledTool? = nil,
+        progress: (RebuildPhase) -> Void = { _ in }
     ) throws -> URL? {
         guard let claim = PrefixStore.claim(prefix) else {
             throw StepFailure(
@@ -61,11 +77,13 @@ extension PrefixTools {
         defer { try? fm.removeItem(at: fresh) }
         try fm.createDirectory(at: fresh, withIntermediateDirectories: true)
 
+        progress(.settingUp)
         var environment = environment(prefix: prefix, runner: runner, flavor: flavor)
         environment["WINEPREFIX"] = fresh.path(percentEncoded: false)
         layOutProfile(in: fresh)
         _ = try Shell.check(loader.path(percentEncoded: false), ["wineboot", "--init"], environment: environment)
 
+        progress(.copying)
         let carry = Carry(from: prefix.pfx, to: fresh)
         carry.userData()
         carry.strayFolders()
@@ -77,6 +95,12 @@ extension PrefixTools {
                 detail: String(localized: "\(first) could not be copied out of the prefix. The prefix has been left as it was and nothing has been lost. Check free space and permissions, then try again.")
             )
         }
+        // A miss here keeps the old prefix as the backup instead of blocking the rebuild.
+        carry.installedFolders()
+        let discard = !keepBackup && carry.lost.isEmpty
+        if !carry.lost.isEmpty {
+            AppLog.note("rebuild \(prefix.appID) kept backup, did not carry: \(carry.lost.joined(separator: ", "))")
+        }
 
         let rerun = InstallScriptMarkers.clear(
             userReg: fresh.appending(path: "user.reg"),
@@ -85,6 +109,7 @@ extension PrefixTools {
             AppLog.note("rebuild \(prefix.appID) Steam will rerun: \(rerun.joined(separator: ", "))")
         }
 
+        progress(.finishing)
         let parked = fm.fileExists(atPath: prefix.pfx.path(percentEncoded: false))
         let previous = backupSlot(in: prefix.root, at: now)
         if parked {
@@ -96,8 +121,9 @@ extension PrefixTools {
             if parked { try? fm.moveItem(at: previous, to: prefix.pfx) }
             throw error
         }
+        if let record { try writeBuildRecord(record, for: prefix) }
         guard parked else { return nil }
-        guard keepBackup else {
+        guard !discard else {
             try? fm.removeItem(at: previous)
             return nil
         }
@@ -226,6 +252,32 @@ private final class Carry {
                 try fm.copyItem(at: stray, to: destination.appending(path: name))
             }
         }
+    }
+
+    // Saves and launchers also live here. Fresh files win; only what the template lacks comes over.
+    func installedFolders() {
+        for name in ["Program Files", "Program Files (x86)", "ProgramData"] {
+            let source = old.appending(path: "drive_c/\(name)")
+            let values = try? source.resourceValues(forKeys: [.isSymbolicLinkKey])
+            guard values?.isSymbolicLink != true else { continue }
+            fill(fresh.appending(path: "drive_c/\(name)"), from: source)
+        }
+    }
+
+    private func fill(_ landing: URL, from source: URL) {
+        for entry in realEntries(in: source) {
+            let target = landing.appending(path: entry.lastPathComponent)
+            if isBrokenLink(target) { try? fm.removeItem(at: target) }
+            var isDirectory: ObjCBool = false
+            if !fm.fileExists(atPath: target.path(percentEncoded: false), isDirectory: &isDirectory) {
+                attempt(entry) { try fm.copyItem(at: entry, to: target) }
+            } else if escapes(target) || isDirectory.boolValue != directoryExists(entry) {
+                park(entry, beside: target)
+            } else if isDirectory.boolValue {
+                fill(target, from: entry)
+            }
+        }
+        carryLinks(from: source, to: landing)
     }
 
     private func attempt(_ source: URL, _ work: () throws -> Void) {

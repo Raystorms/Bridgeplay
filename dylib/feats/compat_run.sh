@@ -33,28 +33,6 @@ np_support="$HOME/Library/Application Support/bridgeplay"
 if [ ! -d "$np_support" ] && [ -d "$HOME/Library/Application Support/notproton" ]; then
   np_support="$HOME/Library/Application Support/notproton"
 fi
-controller_bridge="$np_support/controllers/dualsense/launch"
-if [ "$verb" = waitforexitandrun ] && [ "${DSB_SESSION:-0}" != 1 ] && [ -x "$controller_bridge" ]; then
-  exec "$controller_bridge" "$0" "$verb" "$@"
-fi
-if [ -n "$DSB_LIBRARY" ] && [ -f "$DSB_LIBRARY" ]; then
-  export DYLD_INSERT_LIBRARIES="$DSB_LIBRARY${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
-fi
-# Games read pads directly unless the launch options set BRIDGEPLAY_RAW_CONTROLLERS=0
-# (the controller block below). Settled once here, since the rumble adapter depends on it.
-: "${NOTPROTON_RAW_CONTROLLERS:=1}"
-# Steam's macOS virtual Xbox device has input but no SDL2 rumble backend.
-# The Wine-local adapter forwards only that device's rumble to native Steam, so it is
-# only inserted with direct controller access off (controllers/steam-input/README.md).
-steam_rumble="$np_support/controllers/steam-input/rumble.dylib"
-NOTPROTON_RUMBLE_LIBRARY=""
-if [ "$verb" = waitforexitandrun ] && [ "$NOTPROTON_RAW_CONTROLLERS" != 1 ] \
-  && [ "${NOTPROTON_STEAM_RUMBLE:-1}" != 0 ] && [ -f "$steam_rumble" ]; then
-  export NOTPROTON_STEAM_RUMBLE=1
-  NOTPROTON_RUMBLE_LIBRARY="$steam_rumble"
-  export DYLD_INSERT_LIBRARIES="$steam_rumble${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
-fi
-export NOTPROTON_RUMBLE_LIBRARY
 iconmaker="$np_support/iconmaker"
 
 find_client_root() {
@@ -328,7 +306,8 @@ echo "app_id=$app_id (STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID)" >> "$log" 2>&1 
 # macOS Steam has no virtual gamepad Wine could read, so a pad Steam Input claims (and
 # lists in SDL_GAMECONTROLLER_IGNORE_DEVICES) would reach the game as nothing. Games read
 # pads directly unless the launch options set BRIDGEPLAY_RAW_CONTROLLERS=0.
-if [ "$NOTPROTON_RAW_CONTROLLERS" = "1" ]; then
+if [ "${NOTPROTON_RAW_CONTROLLERS:-1}" = "1" ]; then
+  NOTPROTON_RAW_CONTROLLERS=1
   SDL_GAMECONTROLLER_IGNORE_DEVICES=
   export NOTPROTON_RAW_CONTROLLERS SDL_GAMECONTROLLER_IGNORE_DEVICES
 fi
@@ -392,9 +371,11 @@ $pad_maps"
 }
 np_pad_mappings
 
-# Per-game fixes: the shipped gamefixes-default/<appid>.conf, then the user's
-# gamefixes/<appid>.conf, the later file winning per key. KEY=VALUE lines are checked
-# against an allow-list and never sourced, and the launch options win over both files.
+# Settings for every game, then per-game fixes, the later file winning per key: the shipped
+# gamefixes-default/default.conf, the user's gamefixes/default.conf (Game Defaults in the
+# app), the shipped gamefixes-default/<appid>.conf, then the user's gamefixes/<appid>.conf.
+# KEY=VALUE lines are checked against an allow-list and never sourced, and the launch
+# options win over every file.
 gamefix_keys=""
 gamefix_backend=""
 gamefix_dlloverrides=""
@@ -432,7 +413,7 @@ gamefix_reason() {
   case "$1" in
     BACKEND)
       case "$2" in dxmt|dxvk|wined3d|d3dmetal) ;; *) echo "not dxmt, dxvk, wined3d or d3dmetal" ;; esac ;;
-    MSYNC|RETINA|NVAPI|DLSS_FG|STDOUT_NULL|VSYNC|FRAMEGEN_UI|FRAMEGEN_FALLBACK|STEAMDECK)
+    MSYNC|RETINA|NVAPI|DLSS_FG|STDOUT_NULL|VSYNC|HIDE_WINE_EXPORTS|FRAMEGEN_UI|FRAMEGEN_FALLBACK|STEAMDECK)
       case "$2" in 0|1) ;; *) echo "not 0 or 1" ;; esac ;;
     FRAMEGEN)
       # 1 is the 2x of the first release.
@@ -446,7 +427,7 @@ gamefix_reason() {
     ARGS)
       # Space-separated arguments, each of A-Za-z0-9_+./:=,- only, so none can glob or quote.
       case "$2" in *[!A-Za-z0-9_+./:=,\ -]*) echo "an argument with characters outside A-Za-z0-9_+./:=,-" ;; esac ;;
-    MTL_HUD_ENABLED|WINEDEBUG|WINE_LARGE_ADDRESS_AWARE|WINE_CPU_TOPOLOGY) ;;
+    MTL_HUD_ENABLED|WINEDEBUG|WINE_LARGE_ADDRESS_AWARE|WINE_CPU_TOPOLOGY|CX_FWD_COMPAT_GL_CTX) ;;
     ROSETTA_ADVERTISE_AVX)
       case "$2" in 0|1) ;; *) echo "not 0 or 1" ;; esac ;;
     DXMT_?*|DXVK_?*|MVK_?*|VKD3D_?*|D3DM_?*|STAGING_?*) ;;
@@ -508,6 +489,7 @@ gamefix_apply_env() {
 
 load_gamefixes() {
   case "$app_id" in ''|0) return 0 ;; esac
+  gamefix_read "$np_support/gamefixes-default/default.conf" shipped-global
   gamefix_read "$np_support/gamefixes/default.conf" global
   gamefix_read "$np_support/gamefixes-default/$app_id.conf" default
   gamefix_read "$np_support/gamefixes/$app_id.conf" user
@@ -523,6 +505,7 @@ load_gamefixes() {
       DLSS_FG) gamefix_dlss_fg=$value; gamefix_log "DLSS_FG=$value from the $from conf" ;;
       STDOUT_NULL) gamefix_apply_env NOTPROTON_STDOUT_NULL "$value" "$from" ;;
       VSYNC) gamefix_apply_env NOTPROTON_VSYNC "$value" "$from" ;;
+      HIDE_WINE_EXPORTS) gamefix_apply_env NOTPROTON_HIDE_WINE_EXPORTS "$value" "$from" ;;
       ARGS)
         if [ "$verb" = waitforexitandrun ]; then
           gamefix_args=$value
@@ -734,7 +717,8 @@ select_backend() {
   fi
   if [ -z "$wanted" ] && [ -n "$gamefix_backend" ]; then
     wanted=$gamefix_backend
-    backend_from="BACKEND in the gamefix conf"
+    # Names the layer, so a fallback from a Game Defaults choice reads as one in the log.
+    backend_from="BACKEND in the ${gamefix_from_BACKEND:-gamefix} conf"
   fi
   # A helper has no game to inspect, so it keeps what the game last ran with.
   if [ -z "$wanted" ] && [ "$verb" != waitforexitandrun ] \
@@ -995,41 +979,106 @@ prefix_machine() {
 
 tool_name() {
   case "$1" in
-    aa64) printf 'an arm64 (FEX) Wine engine' ;;
-    8664) printf 'a Rosetta (x86_64) Wine engine' ;;
-    *) printf 'an older 32-bit setup' ;;
+    aa64) printf 'FEX' ;;
+    8664) printf 'Rosetta' ;;
+    *) printf '32-bit' ;;
   esac
+}
+
+# CrossOver's previews are versioned by date, which reads as a release without the word.
+preview_name() {
+  case "$1" in
+    # The date keeps its spaces and the arch its hyphen, but the dialog may only wrap
+    # before the version, never inside it.
+    "CrossOver 20"[0-9][0-9]" "*)
+      printf 'CrossOver Preview %s' "$(printf '%s' "${1#CrossOver }" \
+        | sed "s/ /$(printf '\302\240')/g; s/-/$(printf '\342\200\221')/g")" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# Tool names already end in the arch, which the sentence names on its own.
+running_name() {
+  run_name=$1
+  case "$run_name" in *" - Rosetta" | *" - FEX") run_name=${run_name% - *} ;; esac
+  printf '%s, running through %s' "$(preview_name "$run_name")" "$2"
 }
 
 # Steam passes "run" for helpers such as install scripts, which get no dialog.
 show_alert() {
   [ "$verb" != run ] || return 0
+  launch_step dialog
   exec 8>&- 9>&-
   osascript >/dev/null 2>&1 <<APPLESCRIPT || true
 display alert "$1" message "$2" as critical
 APPLESCRIPT
 }
 
-# A game's first launch builds its prefix and then compiles its shaders into the Metal cache,
-# which can leave a black screen for minutes. Says so once, without holding up the launch.
-# First means no prefix yet, or neither our marker nor a Metal cache for the game's launcher
-# bundle (games from before the marker existed have the cache, so they stay quiet).
-first_launch_notice() {
+# Bridgeplay's panel says the launch is still going until the game shows a window or this
+# script ends, and what it is doing as launch_step writes it. It runs beside the launch and
+# only reads a file, so it never holds the launch up. Later launches show it only when slow
+# (LaunchProgress.swift). Without the app, a new prefix still gets the old notice.
+launch_progress() {
   [ "$verb" = waitforexitandrun ] && [ "$app_id" != 0 ] || return 0
-  marker="$STEAM_COMPAT_DATA_PATH/bridgeplay-first-launch"
-  [ -e "$marker" ] && return 0
-  : > "$marker" 2>/dev/null || true
-  if [ -f "$STEAM_COMPAT_DATA_PATH/pfx/system.reg" ]; then
-    metal_cache="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null)com.notproton.launcher.$app_id/com.apple.metal"
-    [ -d "$metal_cache" ] && return 0
+  launch_step_file="$STEAM_COMPAT_DATA_PATH/bridgeplay-launch-step"
+  launch_step "$1"
+  progress_app=$(cat "$np_support/app-executable" 2>/dev/null) || progress_app=""
+  # An app from before the panel would open its main window for a flag it does not know.
+  if [ -x "$progress_app" ] && LC_ALL=C grep -q -a -F -- --launch-progress "$progress_app" 2>/dev/null; then
+    # A child of this script, so the panel can tell when the script is gone.
+    env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+      "$progress_app" --launch-progress "$STEAM_COMPAT_DATA_PATH" "$prefix_was_new" \
+      "$np_support/launchers/$app_id/bridgeplay-wine.log" "$$" \
+      < /dev/null > /dev/null 2>&1 7>&- 8>&- 9>&- &
+    echo "launch: progress panel started (new prefix: $prefix_was_new)" >> "$log" 2>&1 || true
+  elif [ "$prefix_was_new" = 1 ]; then
+    notify_user "Getting this game ready" "The first launch sets the game up and prepares its graphics. It can take a few minutes, and the screen may stay black until it is ready."
   fi
-  echo "=== first launch, notice shown ===" >> "$log" 2>&1 || true
-  # Posted by the Bridgeplay app, so it carries Bridgeplay's name and icon; osascript (shown
-  # as Script Editor) only when the app cannot be found.
+}
+
+launch_step() {
+  [ -z "${launch_step_file:-}" ] || printf '%s\n' "$1" > "$launch_step_file" 2>/dev/null || true
+}
+
+# Prints 1 when Low Power Mode is on, 0 when off, nothing when pmset does not say. pmset's
+# "Currently in use" values are what ProcessInfo.isLowPowerModeEnabled reports, the lowPower
+# field of compatibility reports (GameReport.swift). Macs with High Power Mode call it
+# powermode (0 automatic, 1 low, 2 high).
+low_power_mode() {
+  pmset -g 2>/dev/null | awk '$1 == "lowpowermode" || $1 == "powermode" { seen = 1; if ($2 == "1") low = 1 }
+    END { if (seen) print low ? 1 : 0 }'
+}
+
+# Low Power Mode lowers the GPU's clocks, and players do not tie that to a slow game. Says so
+# once per Low Power Mode session for each macOS user: the mark goes when a launch finds it
+# off. Runs beside the launch, and when pmset gives no answer nothing is shown or cleared.
+low_power_notice() {
+  [ "$verb" = waitforexitandrun ] || return 0
   (
     exec 8>&- 9>&-
-    title="Bridgeplay" subtitle="Getting this game ready"
-    body="The first launch sets the game up and prepares its graphics. It can take a few minutes, and the screen may stay black until it is ready."
+    mark="$np_support/low-power-noticed"
+    # Games starting together read pmset and change the mark one at a time, so a launch that
+    # read "off" cannot remove a mark made after its read. No lock means no notice.
+    exec 7>> "$np_support/.low-power.lock" && /usr/bin/lockf -s -t 5 7 || exit 0
+    tell=""
+    case "$(low_power_mode)" in
+      0) rm -f "$mark" ;;
+      1)
+        echo "power: Low Power Mode is on" >> "$log" 2>&1 || true
+        [ -e "$mark" ] || { : > "$mark" && tell=1; } || true
+        ;;
+    esac
+    exec 7>&-
+    [ -z "$tell" ] || notify_user "Low Power Mode is on" "Games run slower while it is on. Turn it off in System Settings > Battery, or Energy on a desktop Mac."
+  ) >/dev/null 2>&1 &
+}
+
+# Posted by the Bridgeplay app, so it carries Bridgeplay's name and icon; osascript (shown
+# as Script Editor) only when the app cannot be found. Never holds up the launch.
+notify_user() {
+  (
+    exec 8>&- 9>&-
+    title="Bridgeplay" subtitle=$(alert_safe "$1") body=$(alert_safe "$2")
     open -n -g -b com.bridgeplay.Bridgeplay --args --notify "$title" "$subtitle" "$body" ||
       osascript -e "display notification \"$body\" with title \"$title\" subtitle \"$subtitle\""
   ) >/dev/null 2>&1 &
@@ -1041,6 +1090,182 @@ alert_safe() {
   printf '%s' "$1" | tr -d '"\\'
 }
 
+# The log path reaches AppleScript as an argument, so a quote in it cannot end a string.
+show_rebuild_failure() {
+  [ "$verb" != run ] || return 0
+  launch_step dialog
+  exec 8>&- 9>&-
+  answer=$(osascript - "$log" <<'APPLESCRIPT'
+on run argv
+  set answer to display alert "Prefix rebuild failed!" message ("Check bridgeplay-run.log at " & (item 1 of argv) & ".") as critical buttons {"Open Log", "OK"} default button "OK"
+  return button returned of answer
+end run
+APPLESCRIPT
+  ) || answer=""
+  [ "$answer" != "Open Log" ] || { [ -f "$log" ] && [ ! -L "$log" ] && open -t "$log" >/dev/null 2>&1; } || true
+}
+
+# Kernel anti-cheat needs a Windows driver, which Wine cannot load, so these games quit at
+# start. Prints the anti-cheat's name for one of its file names, nothing otherwise.
+kernel_anticheat_name() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    randgrid.sys) echo "Ricochet" ;;
+    xhunter1.sys) echo "XIGNCODE3" ;;
+    eaanticheat.installer.exe | eaanticheat.gameservicelauncher.exe) echo "EA Javelin" ;;
+  esac
+}
+
+# The first kernel anti-cheat in a game folder, as "Name (file)". Shallow, so a large
+# install does not hold up the launch.
+find_kernel_anticheat() {
+  [ -d "$1" ] || return 0
+  find "$1" -maxdepth 3 -type f \( -iname '*.sys' -o -iname 'eaanticheat.*.exe' \) 2>/dev/null |
+    while IFS= read -r ka_file; do
+      ka_name=$(kernel_anticheat_name "${ka_file##*/}")
+      [ -z "$ka_name" ] || { printf '%s (%s)\n' "$ka_name" "${ka_file##*/}"; break; }
+    done
+}
+
+# Seconds the anti-cheat prompt waits. Steam shows the game as running until it is answered.
+kernel_anticheat_wait=90
+
+# Asks before a launch that cannot work and that could get the account banned. Only Launch
+# Anyway goes ahead: Don't Launch, no answer in time or a dialog that cannot show all exit
+# before Wine or the prefix is touched.
+kernel_anticheat_notice() {
+  [ "$verb" = waitforexitandrun ] || return 0
+  ka_found=$(find_kernel_anticheat "$STEAM_COMPAT_INSTALL_PATH")
+  [ -n "$ka_found" ] || return 0
+  echo "anticheat: found kernel anti-cheat $ka_found, whose driver Wine cannot load" >> "$log" 2>&1 || true
+  ka_status=0
+  answer=$(osascript - "$ka_found" "$kernel_anticheat_wait" 8>&- 9>&- 2>> "$log" <<'APPLESCRIPT'
+on run argv
+  set answer to display alert "This game's anti-cheat can't run" message ("It uses " & (item 1 of argv) & ", kernel anti-cheat that needs a Windows driver. Wine cannot load it, so the game will most likely quit at start. Playing online with it is at your own risk.") as critical buttons {"Launch Anyway", "Don't Launch"} default button "Don't Launch" giving up after ((item 2 of argv) as integer)
+  if gave up of answer then return "gave up"
+  return button returned of answer
+end run
+APPLESCRIPT
+  ) || ka_status=$?
+  case "$ka_status:$answer" in
+    "0:Launch Anyway")
+      echo "anticheat: the player chose Launch Anyway" >> "$log" 2>&1 || true
+      return 0
+      ;;
+    "0:Don't Launch") ka_why="the player chose Don't Launch" ;;
+    "0:gave up") ka_why="no answer within ${kernel_anticheat_wait}s" ;;
+    0:*) ka_why="the dialog returned no choice" ;;
+    *) ka_why="the dialog could not be shown (exit $ka_status)" ;;
+  esac
+  {
+    echo "=== not launched: kernel anti-cheat, $ka_why ==="
+    echo "=== exit summary: not launched, stopped before Wine started ==="
+    echo "=== exit cause: blocked: kernel anti-cheat $ka_found not confirmed, $ka_why ==="
+  } >> "$log" 2>&1 || true
+  exit 0
+}
+
+# The anti-cheat whose driver failed to load, from Wine's log.
+exit_anticheat() {
+  [ -f "$1" ] || return 0
+  grep -a -E 'err:(module:import_dll|ntoskrnl:ZwLoadDriver)' "$1" 2>/dev/null |
+    grep -a -o -i -E '[a-z0-9_.-]+\.sys' | while IFS= read -r ea_file; do
+      ea_name=$(kernel_anticheat_name "$ea_file")
+      [ -z "$ea_name" ] || { printf '%s (%s)\n' "$ea_name" "$ea_file"; break; }
+    done
+}
+
+# Steam shows the game as running while this waits, and Stop kills the script's process
+# group and children. A rebuild killed between its two renames leaves no pfx at all, so the
+# app runs outside both: the inner subshell is reparented to launchd and the app calls
+# setsid. The script only waits for the exit status the subshell leaves behind.
+run_rebuild() {
+  rebuild_exit="$STEAM_COMPAT_DATA_PATH/notproton-rebuild-exit"
+  rebuild_lock="$STEAM_COMPAT_DATA_PATH/.notproton-rebuild.lock"
+  rm -f "$rebuild_exit"
+  (
+    (
+      env -i HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+        NOTPROTON_REBUILD_WINDOW=1 \
+        "$1" --rebuild-prefix "$STEAM_COMPAT_DATA_PATH" "${np_tool_dir##*/}" \
+        "$np_build" "$np_flavor" "$2" >> "$log" 2>&1 < /dev/null
+      echo "$?" > "$rebuild_exit.$$" && mv -f "$rebuild_exit.$$" "$rebuild_exit"
+    ) &
+  )
+  waited=0
+  while [ ! -f "$rebuild_exit" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    # Nothing holds the lock once the app is gone. The grace covers its startup.
+    if [ "$waited" -gt 30 ] && /usr/bin/lockf -k -s -t 0 "$rebuild_lock" true 2>/dev/null; then
+      sleep 2
+      [ -f "$rebuild_exit" ] || return 1
+    fi
+  done
+  read -r rebuild_status_code < "$rebuild_exit" || rebuild_status_code=1
+  rm -f "$rebuild_exit"
+  [ "$rebuild_status_code" = 0 ]
+}
+
+# $1 is the title, $2 the message. With $3, that button skips the rebuild and the launch goes on.
+rebuild_prefix() {
+  # Install-script helpers must never prompt or rebuild behind the player's back.
+  [ "$verb" != run ] || { [ -n "$3" ] && return 0; exit 1; }
+  [ "${np_rebuilt:-0}" != 1 ] || {
+    show_rebuild_failure
+    exit 1
+  }
+  launch_step dialog
+  exec 8>&- 9>&-
+  # AppleScript run from a shell has no icon of its own, so caution comes badged with a folder.
+  icon=$(cat "$np_support/app-executable" 2>/dev/null) || icon=""
+  icon="${icon%/Contents/MacOS/*}/Contents/Resources/Bridgeplay.icns"
+  [ -f "$icon" ] || icon=""
+  choice=$(osascript - "$1" "$2" "${3:-Cancel}" "$icon" <<'APPLESCRIPT'
+on run argv
+  set choices to {item 3 of argv, "Rebuild Prefix", "Backup & Rebuild Prefix"}
+  if item 4 of argv is "" then
+    set answer to display dialog (item 2 of argv) with title (item 1 of argv) buttons choices default button "Backup & Rebuild Prefix" cancel button (item 3 of argv) with icon caution
+  else
+    set answer to display dialog (item 2 of argv) with title (item 1 of argv) buttons choices default button "Backup & Rebuild Prefix" cancel button (item 3 of argv) with icon ((POSIX file (item 4 of argv)) as alias)
+  end if
+  return button returned of answer
+end run
+APPLESCRIPT
+  ) || choice=""
+  case "$choice" in
+    'Backup & Rebuild Prefix') backup=keep-backup ;;
+    'Rebuild Prefix') backup=discard-backup ;;
+    *)
+      [ -n "$3" ] || exit 1
+      prepare_prefix_directory || exit 1
+      return 0
+      ;;
+  esac
+  executable=$(cat "$np_support/app-executable" 2>/dev/null) || executable=""
+  if [ ! -x "$executable" ]; then
+    show_alert "Couldn't find the Bridgeplay app" "The prefix wasn't rebuilt and the game wasn't launched, because the Bridgeplay app was moved or deleted since it was installed, or was installed from a disk image or Downloads. Move Bridgeplay to Applications, open it and click Install again, then launch the game."
+    exit 1
+  fi
+  if ! run_rebuild "$executable" "$backup"; then
+    # This dialog says it failed, so the page should not say it again later. A refusal
+    # because another rebuild runs left that rebuild's progress, which stays.
+    rebuild_status="$STEAM_COMPAT_DATA_PATH/notproton-rebuild"
+    [ "$(head -n 1 "$rebuild_status" 2>/dev/null)" != failed ] || rm -f "$rebuild_status"
+    show_rebuild_failure
+    exit 1
+  fi
+  rm -f "$STEAM_COMPAT_DATA_PATH/notproton-switch" "$STEAM_COMPAT_DATA_PATH/notproton-rebuild"
+  # A competing launch or rebuild may have run while the dialog was open.
+  # Retake the normal launch lock and check both mismatches before touching Wine.
+  if ! prepare_prefix_directory; then
+    show_alert "Prefix rebuilt" "Another launch is using this prefix. Wait for it to finish, then launch the game again."
+    exit 1
+  fi
+  np_rebuilt=1
+  note_other_build
+  refuse_foreign_prefix
+}
+
 refuse_foreign_prefix() {
   case "${wine_unix##*/}" in
     aarch64-unix) want=aa64 ;;
@@ -1049,8 +1274,18 @@ refuse_foreign_prefix() {
   have=$(prefix_machine) || return 0
   [ "$have" = "$want" ] && return 0
   echo "=== prefix ntdll is $have and this compatibility tool wants $want, rebuild the prefix in Bridgeplay ===" >> "$log" 2>&1 || true
-  show_alert "This game needs its prefix rebuilt" "This game originally ran under $(tool_name "$have"), but $(tool_name "$want") is present now. The prefix needs to be rebuilt in Bridgeplay in order to run the game. You will not lose game saves by rebuilding the prefix."
-  exit 1
+  had_tool=$(tool_name "$have")
+  want_tool=$(tool_name "$want")
+  explanation="$had_tool prefixes cannot be used with versions of CrossOver that run through $want_tool unless they are rebuilt."
+  # note_other_build read the build that set up the prefix.
+  case "$have:$had_display" in
+    aa64:?* | 8664:?*)
+      explanation="This game's prefix was last used by $(running_name "$had_display" "$had_tool"). $explanation"
+      ;;
+  esac
+  rebuild_prefix "This game needs its prefix rebuilt" "$explanation
+
+Do you want to rebuild the prefix for $(running_name "$np_display" "$want_tool")? Your save games will be preserved and not lost."
 }
 
 last_wine_build() {
@@ -1077,7 +1312,10 @@ last_wine_build() {
   done
 }
 
-refuse_other_build() {
+# A prefix from another build of the same arch runs as is, in either direction. Its
+# .update-timestamp no longer matches wine.inf, and Wine reruns wine.inf on first start,
+# which replaces builtin DLLs and keeps native ones.
+note_other_build() {
   record="$STEAM_COMPAT_DATA_PATH/notproton-build"
   had_build=""
   had_display=""
@@ -1090,11 +1328,159 @@ refuse_other_build() {
     last_wine_build
   fi
   if [ -n "$had_build" ] && [ "$had_build" != "$np_build" ]; then
-    echo "=== prefix was last run by build $had_build and this compatibility tool runs $np_build, rebuild the prefix in Bridgeplay ===" >> "$log" 2>&1 || true
-    had_display=$(alert_safe "${had_display:-CrossOver build $had_build}")
-    show_alert "This game needs its prefix rebuilt" "This game's prefix was last run by $had_display, and this compatibility tool runs $(alert_safe "$np_display"). Rebuild the prefix in Bridgeplay to run it here, or pick $had_display again in the game's Compatibility settings. You will not lose game saves by rebuilding the prefix."
-    exit 1
+    echo "=== prefix was last run by build $had_build (${had_display:-unknown}), Wine updates it for $np_build ===" >> "$log" 2>&1 || true
+    case "${wine_unix##*/}:$(prefix_machine)" in
+      aarch64-unix:8664 | aarch64-unix:014c | x86_64-unix:aa64 | x86_64-unix:014c) return 0 ;;
+    esac
+    switch="$STEAM_COMPAT_DATA_PATH/notproton-switch"
+    rm -f "$switch"
+    # Only a build the game is known to have run on can be blamed for a crash after the switch.
+    if [ "$(head -1 "$STEAM_COMPAT_DATA_PATH/notproton-healthy" 2>/dev/null)" = "$had_build" ]; then
+      printf '%s\n%s\n0\n' "$had_build" "${had_display:-CrossOver build $had_build}" > "$switch" 2>/dev/null || true
+    fi
   fi
+}
+
+# Healthy is a session Steam did not cut short or that lasted, with no Wine crash. Failed is a
+# crash within the first minute. Anything else says nothing about the build.
+session_health() {
+  crashed=0
+  grep -q -E 'Unhandled (page fault|exception)|err:module:import_dll' "$1" 2>/dev/null && crashed=1
+  if [ "$crashed" = 1 ] && [ "$2" -lt 60 ] && [ "$3" != 1 ]; then
+    echo failed
+  elif [ "$crashed" = 0 ] && { [ "$3" != 1 ] || [ "$2" -ge 60 ]; }; then
+    echo healthy
+  else
+    echo unknown
+  fi
+}
+
+set_switch_state() {
+  if ! { sed -n 1,2p "$switch" && printf '%s\n' "$1"; } > "$switch.$$" \
+    || ! mv -f "$switch.$$" "$switch"; then
+    rm -f "$switch.$$"
+  fi
+}
+
+# The switch record is old build, its name, then the healthy sessions since or "failed".
+# Two healthy sessions clear it.
+record_session() {
+  switch="$STEAM_COMPAT_DATA_PATH/notproton-switch"
+  health=$(session_health "$1" "$2" "$3")
+  echo "=== session health: $health after $2s ===" >> "$log" 2>&1 || true
+  case "$health" in
+    healthy)
+      printf '%s\n' "$np_build" > "$STEAM_COMPAT_DATA_PATH/notproton-healthy" 2>/dev/null || true
+      [ -f "$switch" ] || return 0
+      count=$(sed -n 3p "$switch")
+      case "$count" in
+        0) set_switch_state 1 ;;
+        *) rm -f "$switch" ;;
+      esac
+      ;;
+    failed)
+      [ -f "$switch" ] || return 0
+      set_switch_state failed
+      ;;
+  esac
+}
+
+# Wine exits with the low byte of the Windows exit code, so 0xc0000005 arrives as 5 and
+# 0xc0000135 as 53. A game can also exit with that number itself, so the summary says
+# "likely". Codes not listed stay raw.
+exit_meaning() {
+  case "$1" in
+    1) echo "a generic failure, from the game or from Wine starting it" ;;
+    3) echo "abort() in the C runtime or a breakpoint, usually after the game's own error message" ;;
+    5) echo "0xc0000005, an access violation: the game crashed" ;;
+    9) echo "0xc0000409, the game stopped itself on a fatal error (fail fast or stack buffer overrun)" ;;
+    23) echo "0xc0000417, an invalid parameter to the C runtime" ;;
+    29) echo "0xc000001d, an illegal instruction, often a CPU feature the Mac does not have" ;;
+    53) echo "0xc0000135, a DLL the game needs was not found" ;;
+    66) echo "0xc0000142, a DLL failed to initialize" ;;
+    99) echo "0xe06d7363, a C++ exception nothing caught" ;;
+    116) echo "0xc0000374, heap corruption" ;;
+    253) echo "0xc00000fd, a stack overflow" ;;
+    255) echo "exit code -1, a failure the game reported itself" ;;
+  esac
+}
+
+# The launcher is a shell, so a Wine process killed by signal N ends with 128+N. Wine
+# handles the signals Windows code raises, so these come from the Mac side.
+exit_signal() {
+  case "$1" in
+    129) echo "SIGHUP" ;;
+    130) echo "SIGINT" ;;
+    132) echo "SIGILL, an illegal instruction in Mac-side code" ;;
+    133) echo "SIGTRAP, a trap in Mac-side code such as Wine, D3DMetal or a macOS framework" ;;
+    134) echo "SIGABRT, an abort in Mac-side code such as Wine, D3DMetal or a macOS framework" ;;
+    136) echo "SIGFPE, an arithmetic error in Mac-side code" ;;
+    137) echo "SIGKILL, killed by macOS or another process; running out of memory is a common cause" ;;
+    138) echo "SIGBUS, a crash in Mac-side code such as Wine, D3DMetal or MoltenVK" ;;
+    139) echo "SIGSEGV, a crash in Mac-side code such as Wine, D3DMetal or MoltenVK" ;;
+    143) echo "SIGTERM, asked to quit from outside Steam" ;;
+  esac
+}
+
+# The lines Wine prints when a process dies or cannot start. iconv drops invalid bytes, so
+# the run log stays UTF-8 for the app, and keeps a home folder with an accented name whole for
+# the report's redaction to match.
+exit_crash_lines() {
+  [ -f "$1" ] || return 0
+  grep -a -E -m 3 'Unhandled (page fault|exception|illegal instruction|stack overflow)|^wine: (Call from|could not|cannot|failed)|err:module:(import_dll|LdrInitializeThunk)|wine client error' \
+    "$1" 2>/dev/null | LC_ALL=C tr -d '\0-\10\13-\37\177' | LC_ALL=C cut -b 1-300 | iconv -c -f UTF-8 -t UTF-8 2>/dev/null || true
+}
+
+# How the game ended, in one line, plus Wine's crash lines. GameSession.swift reads these
+# into play reports. Arguments: exit status, seconds, 1 if Steam stopped it, the Wine log.
+exit_summary() {
+  if [ "$2" -ge 120 ]; then es_took="$(($2 / 60)) min"; else es_took="${2}s"; fi
+  es_signal=$(exit_signal "$1")
+  es_meaning=$(exit_meaning "$1")
+  if [ "$3" = 1 ]; then
+    es_how="stopped from Steam"
+  elif [ "${NOTPROTON_LAUNCH_SERVICES:-0}" = 1 ]; then
+    es_how="started through Launch Services, so the status is open's and not the game's"
+  elif [ -n "$es_signal" ]; then
+    es_how="Wine was likely killed by $es_signal"
+  elif [ "$1" = 0 ] && [ "$2" -lt 60 ]; then
+    es_how="the game quit by itself within a minute without an error code, usually after its own error message"
+  elif [ "$1" = 0 ]; then
+    es_how="the game quit normally"
+  elif [ -n "$es_meaning" ]; then
+    es_how="the game quit by itself (likely $es_meaning)"
+  else
+    es_how="the game quit by itself"
+  fi
+  printf '=== exit summary: exit status %s after %s, %s ===\n' "$1" "$es_took" "$es_how"
+  es_anticheat=$(exit_anticheat "$4")
+  [ -z "$es_anticheat" ] || printf '=== exit cause: kernel anti-cheat %s could not load its Windows driver, which Wine cannot run, so the game will not start ===\n' "$es_anticheat"
+  exit_crash_lines "$4" | while IFS= read -r es_line; do
+    printf '=== exit cause: %s ===\n' "$es_line"
+  done
+  # winedbg's "has encountered a serious problem" dialog holds the game open until closed.
+  if grep -a -q -E 'starting debugger|exe=winedbg' "$4" 2>/dev/null; then
+    echo "=== exit note: Wine started its crash handler, whose error dialog can sit behind the game ==="
+  fi
+}
+
+# Asked once per switch, at the next launch after the crash.
+offer_switch_rebuild() {
+  switch="$STEAM_COMPAT_DATA_PATH/notproton-switch"
+  [ "$(sed -n 3p "$switch" 2>/dev/null)" = failed ] || return 0
+  [ "$verb" != run ] || return 0
+  old_display=$(sed -n 2p "$switch")
+  case "${wine_unix##*/}" in
+    aarch64-unix) now_arch=aa64 ;;
+    *) now_arch=8664 ;;
+  esac
+  rm -f "$switch"
+  echo "=== last session crashed after switching from $old_display, offering a rebuild ===" >> "$log" 2>&1 || true
+  rebuild_prefix "This game may need its prefix rebuilt" \
+    "Something appears to have gone wrong the last time you ran this game! Rebuilding the prefix may fix it.
+
+Rebuild your prefix for $(running_name "$np_display" "$(tool_name "$now_arch")")? Your save games will be preserved and not lost." \
+    "Launch Without Rebuilding"
 }
 
 claim_prefix() {
@@ -1103,6 +1489,77 @@ claim_prefix() {
   printf '%s\n%s\n' "$np_build" "$np_display" > "$STEAM_COMPAT_DATA_PATH/notproton-build" 2>/dev/null \
     || echo "=== could not record build $np_build in the prefix ===" >> "$log" 2>&1 || true
 }
+# Wine prefixes are only tested on APFS (and HFS+). Every run logs the file system so a
+# report from an exFAT or network library says so; a new prefix there also tells the player.
+volume_type() {
+  device=$(stat -f %Sd "$1" 2>/dev/null) || return 1
+  mount | sed -n "s|^/dev/$device on \(.*\) (\([^,)]*\).*|\2 \1|p" | head -1
+}
+
+note_prefix_volume() {
+  vol=$(volume_type "$STEAM_COMPAT_DATA_PATH") || vol=""
+  fs=${vol%% *}
+  echo "volume: compatdata on ${fs:-unknown} (${vol#* })" >> "$log" 2>&1 || true
+  case "$fs" in apfs|hfs|"") return 0 ;; esac
+  echo "=== compatdata is on $fs, not APFS: Wine prefixes are only tested on APFS, games may hang or fail to start ===" \
+    >> "$log" 2>&1 || true
+  [ "$prefix_was_new" = 1 ] || return 0
+  notify_user "This Steam library is not on APFS" "It is formatted $fs. Games run from it may hang or fail to start. Move the game to a library on an APFS drive for the best results."
+}
+
+# Without C:\windows\system32 Wine stops at "could not load kernel32.dll" and the game quits
+# with no window. exFAT and FAT have no symbolic links, so dosdevices/c: cannot exist there.
+# Ends the launch when the prefix is broken.
+refuse_broken_prefix() {
+  [ ! -f "$WINEPREFIX/dosdevices/c:/windows/system32/kernel32.dll" ] || return 0
+  vol=$(volume_type "$STEAM_COMPAT_DATA_PATH") || vol=""
+  fs=${vol%% *}
+  echo "=== the prefix has no C:\\windows\\system32\\kernel32.dll, Wine did not finish building it ===" \
+    >> "$log" 2>&1 || true
+  case "$fs" in exfat|msdos|ntfs)
+    show_alert "This Steam library cannot hold the game's prefix" "It is formatted $fs, which has no symbolic links, so Wine cannot set up the game here. Move the game to a library on an APFS drive."
+    exit 1
+  esac
+  # Wine reports a full disk only as error=112 on each file it could not copy.
+  free_kb=$(df -Pk "$STEAM_COMPAT_DATA_PATH" 2>/dev/null | awk 'NR == 2 { print $4 }')
+  if [ -n "$free_kb" ] && [ "$free_kb" -lt 2097152 ]; then
+    show_alert "The disk is too full for the game's prefix" "Wine needs about 2 GB free to set up the game. Free some space on the drive that holds this Steam library, then rebuild the prefix in Bridgeplay."
+    exit 1
+  fi
+  show_alert "The game's prefix could not be set up" "Wine did not finish building it. Rebuild the prefix in Bridgeplay, then launch again. bridgeplay-run.log has the details."
+  exit 1
+}
+
+# Steam keeps a game's prefix in the library that holds the game, so a game moved to another
+# library starts over with an empty one: saves and launcher sign-ins kept only in the old
+# prefix seem lost. Names the old one when a new prefix is about to be built.
+steam_libraries() {
+  for vdf in "$client_root/steamapps/libraryfolders.vdf" "$client_root/config/libraryfolders.vdf"; do
+    [ -f "$vdf" ] || continue
+    sed -nE 's/^[[:space:]]*"path"[[:space:]]*"(.*)"[[:space:]]*$/\1/p' "$vdf" | sed 's/\\\\/\\/g'
+    return 0
+  done
+}
+
+note_other_prefixes() {
+  [ "$prefix_was_new" = 1 ] && [ "$app_id" != 0 ] || return 0
+  here=$(cd -P -- "$STEAM_COMPAT_DATA_PATH" 2>/dev/null && pwd) || return 0
+  old_prefix=""
+  while IFS= read -r library; do
+    [ -n "$library" ] || continue
+    other="$library/steamapps/compatdata/$app_id"
+    [ -f "$other/pfx/system.reg" ] || continue
+    there=$(cd -P -- "$other" 2>/dev/null && pwd) || continue
+    [ "$there" != "$here" ] || continue
+    echo "=== an older prefix for this game is in another library: $other ===" >> "$log" 2>&1 || true
+    [ -n "$old_prefix" ] || old_prefix=$other
+  done <<EOF_LIBRARIES
+$(steam_libraries)
+EOF_LIBRARIES
+  [ -n "$old_prefix" ] || return 0
+  notify_user "This game starts with a new prefix" "Its earlier prefix is still in $old_prefix. Saves or launcher sign-ins kept only there are not in the new one."
+}
+
 # Steam cloud related
 merge_user_dir() {
   src=$1
@@ -1493,6 +1950,7 @@ in_template_env() {
 
 seed_scratch=""
 seed_building=0
+seed_merging=0
 # shellcheck disable=SC2329 # the traps in seed_prefix_from_template invoke this
 abandon_seed() {
   if [ -n "$seed_scratch" ]; then
@@ -1500,7 +1958,10 @@ abandon_seed() {
       in_template_env "$seed_scratch" "$WINESERVER" -k >/dev/null 2>&1 || true
       in_template_env "$seed_scratch" "$WINESERVER" -w >/dev/null 2>&1 || exit "$1"
     fi
-    rm -rf "$seed_scratch" 2>/dev/null || true
+    # Half moved into the prefix: finish now, or keep the rest for the next launch to finish.
+    if [ "$seed_merging" -eq 0 ] || { unnest_seed_entry && merge_seed_tree move; }; then
+      rm -rf "$seed_scratch" 2>/dev/null || true
+    fi
   fi
   exit "$1"
 }
@@ -1509,8 +1970,14 @@ prefix_server_dir() {
   [ -n "${1:-$WINEPREFIX}" ] || return 1
   ids=$(stat -f '%d-%i' "${1:-$WINEPREFIX}" 2>/dev/null) || return 1
   [ -n "$ids" ] || return 1
-  printf '/tmp/.wine-%s/server-%s' "$(id -u)" \
-    "$(printf '%s' "$ids" | awk -F- '{printf "%x-%x", $1, $2}')"
+  # Callers lsof and kill -9 whatever is open under this path: refuse a link or a folder
+  # another macOS user planted in the shared /tmp.
+  for owned in "/tmp/.wine-$(id -u)" \
+    "/tmp/.wine-$(id -u)/server-$(printf '%x-%x' "${ids%-*}" "${ids#*-}")"; do
+    [ ! -L "$owned" ] || return 1
+    [ ! -e "$owned" ] || [ "$(stat -f %u "$owned" 2>/dev/null)" = "$(id -u)" ] || return 1
+  done
+  printf '%s' "$owned"
 }
 
 sweep_dead_seeds() {
@@ -1577,7 +2044,65 @@ build_prefix_template() {
   [ -f "$template_dir/pfx/system.reg" ]
 }
 
-install_seed_tree() (
+# Puts back a staged folder that mv put inside a folder that appeared at its name since the
+# check. Each folder move is noted first, so this also works after a launch killed mid-move.
+unnest_seed_entry() {
+  placing="$seed_scratch/.notproton-seed-placing"
+  [ -s "$placing" ] || return 0
+  # Cut short while it was noted, so the move never started.
+  { read -r staged && read -r source && read -r target; } < "$placing" || { : > "$placing"; return 0; }
+  case "$source:$target" in "$seed_scratch"/*:"$WINEPREFIX"/*) ;; *) return 1 ;; esac
+  nested="$target/${source##*/}"
+  if [ "$(stat -f %i "$target" 2>/dev/null)" != "$staged" ] \
+    && [ "$(stat -f %i "$nested" 2>/dev/null)" = "$staged" ]; then
+    mv -n "$nested" "$source" && [ ! -e "$nested" ] || return 1
+  fi
+  : > "$placing"
+}
+
+# Puts one staged entry at a free name in the prefix, never over something that appeared
+# there since the check: link(2) and symlink(2) refuse an existing name, and a folder that
+# appeared takes ours inside it, which goes back to staging.
+place_seed_entry() {
+  if [ -d "$1" ] && [ ! -L "$1" ]; then
+    staged=$(stat -f %i "$1") || return 1
+    printf '%s\n%s\n%s\n' "$staged" "$1" "$2" > "$seed_scratch/.notproton-seed-placing" || return 1
+    mv -n "$1" "$2" || return 1
+    if [ "$(stat -f %i "$2" 2>/dev/null)" = "$staged" ]; then
+      : > "$seed_scratch/.notproton-seed-placing"
+      return 0
+    fi
+    unnest_seed_entry
+    return 1
+  elif [ -L "$1" ]; then
+    link=$(readlink "$1") || return 1
+    ln -sh "$link" "$2" || return 1
+    if [ -L "$2" ] && [ "$(readlink "$2")" = "$link" ]; then
+      rm -f "$1"
+      return
+    fi
+    # ln made it inside a folder that appeared at $2, named after the link's target.
+    nested="$2/${link##*/}"
+    [ ! -L "$nested" ] || [ "$(readlink "$nested")" != "$link" ] || rm -f "$nested"
+    return 1
+  else
+    ln -h "$1" "$2" || return 1
+    if [ ! -L "$2" ] && [ "$1" -ef "$2" ]; then
+      rm -f "$1"
+      return
+    fi
+    [ ! "$1" -ef "$2/${1##*/}" ] || rm -f "$2/${1##*/}"
+    return 1
+  fi
+}
+
+# Moves the cloned template into the prefix, one rename per entry. It only descends into
+# folders the prefix already has (the Steam profile and dosdevices), so most of the tree
+# moves at once. "check" moves nothing and fails where "move" would. system.reg goes in
+# last: until it does, the prefix is not seeded.
+merge_seed_tree() (
+  mode=$1
+  same_volume "$seed_scratch" "$WINEPREFIX" || return 1
   set -- ""
   while [ "$#" -gt 0 ]; do
     relative=$1
@@ -1590,38 +2115,41 @@ install_seed_tree() (
       [ -e "$source" ] || [ -L "$source" ] || continue
       name=${source##*/}
       if [ -z "$relative" ]; then
-        case "$name" in system.reg|.update-timestamp) continue ;; esac
+        case "$name" in
+          system.reg|.update-timestamp|.notproton-seed-*) continue ;;
+        esac
       fi
       target="$target_dir/$name"
-      if [ -d "$source" ] && [ ! -L "$source" ]; then
-        if [ ! -e "$target" ] && [ ! -L "$target" ]; then
-          mkdir "$target" || return 1
-        fi
+      if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+        [ -w "$target_dir" ] || return 1
+        [ "$mode" = check ] || place_seed_entry "$source" "$target" || return 1
+      elif [ -d "$source" ] && [ ! -L "$source" ]; then
         [ -d "$target" ] && [ ! -L "$target" ] || return 1
         set -- "$@" "$relative/$name"
-      elif [ -e "$target" ] || [ -L "$target" ]; then
+      else
         case "$relative/$name" in
           /drive_c/users/steamuser/*) continue ;;
         esac
+        # Linked in by a launch killed before it removed the staged name.
+        [ ! -L "$source" ] && [ "$source" -ef "$target" ] && continue
         [ -L "$source" ] && [ -L "$target" ] \
           && [ "$(readlink "$source")" = "$(readlink "$target")" ] || return 1
-      elif [ -L "$source" ]; then
-        ln -sh "$(readlink "$source")" "$target" || return 1
-        [ -L "$target" ] && [ "$(readlink "$source")" = "$(readlink "$target")" ] || return 1
-      elif [ -f "$source" ]; then
-        ln -h "$source" "$target" || return 1
-        [ ! -L "$target" ] && [ "$source" -ef "$target" ] || return 1
-      else
-        return 1
       fi
     done
   done
-  ln -h "$seed_scratch/system.reg" "$WINEPREFIX/system.reg" \
-    && [ ! -L "$WINEPREFIX/system.reg" ] \
-    && [ "$seed_scratch/system.reg" -ef "$WINEPREFIX/system.reg" ] || return 1
-  if [ -f "$seed_scratch/.update-timestamp" ]; then
-    ln -h "$seed_scratch/.update-timestamp" "$WINEPREFIX/.update-timestamp" || return 1
-  fi
+  for name in system.reg .update-timestamp; do
+    source="$seed_scratch/$name"
+    target="$WINEPREFIX/$name"
+    if [ -f "$source" ] && [ ! -L "$source" ] && [ "$source" -ef "$target" ]; then
+      [ "$mode" = check ] || rm -f "$source" || return 1
+    elif [ -f "$source" ] && [ ! -L "$source" ]; then
+      [ ! -e "$target" ] && [ ! -L "$target" ] && [ -w "$WINEPREFIX" ] || return 1
+      [ "$mode" = check ] || place_seed_entry "$source" "$target" || return 1
+    elif [ -e "$source" ] || [ -L "$source" ]; then
+      return 1
+    fi
+  done
+  [ "$mode" = check ] || { [ -f "$WINEPREFIX/system.reg" ] && [ ! -L "$WINEPREFIX/system.reg" ]; }
 )
 
 copy_template_into_prefix() {
@@ -1638,14 +2166,67 @@ copy_template_into_prefix() {
     how="copied this prefix from the $runner_id template, not a clone"
     cp -R "$template_dir/pfx/." "$seed_scratch" 2>/dev/null && copied=0 || copied=$?
   fi
-  if [ "$copied" -eq 0 ] && prefix_is_bare && install_seed_tree; then
-    echo "=== $how ===" >> "$log" 2>&1 || true
+  # Files go in as hard links. Without them (exFAT, some network shares), back off before
+  # anything moves or is recorded for a later launch to finish; staging is on the prefix's
+  # volume. The target lets a later launch finish a merge this one could not, into this
+  # prefix only. It is the inode alone: an external drive can come back with another
+  # device number.
+  if [ "$copied" -eq 0 ] \
+    && ! ln "$seed_scratch/system.reg" "$seed_scratch/.notproton-seed-link" 2>/dev/null; then
+    echo "=== this volume has no hard links, wine builds this prefix itself ===" >> "$log" 2>&1 || true
+  elif [ "$copied" -eq 0 ] && prefix_is_bare \
+    && stat -f %i "$WINEPREFIX" > "$seed_scratch/.notproton-seed-target" 2>/dev/null \
+    && merge_seed_tree check; then
+    seed_merging=1
+    if merge_seed_tree move; then
+      echo "=== $how ===" >> "$log" 2>&1 || true
+    else
+      echo "=== could not finish seeding from the template, wine completes this prefix ===" \
+        >> "$log" 2>&1 || true
+    fi
+    seed_merging=0
   else
     echo "=== could not seed from the template, wine builds this prefix itself ===" \
       >> "$log" 2>&1 || true
   fi
   rm -rf "$seed_scratch" 2>/dev/null || true
   seed_scratch=""
+}
+
+# A launch killed while it moved the template in left the rest in its staging folder.
+finish_dead_seeds() {
+  dropping=""
+  for leftover in "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*; do
+    [ -d "$leftover" ] && [ ! -L "$leftover" ] || continue
+    case "${leftover##*.}" in ''|0|*[!0-9]*) continue ;; esac
+    [ "$(stat -f %u "$leftover" 2>/dev/null)" = "$(id -u)" ] || continue
+    kill -0 "${leftover##*.}" 2>/dev/null && continue
+    if [ ! -f "$leftover/.notproton-seed-target" ]; then
+      why="it stopped before it moved anything in"
+    elif [ "$(cat "$leftover/.notproton-seed-target" 2>/dev/null)" \
+      != "$(stat -f %i "$WINEPREFIX" 2>/dev/null)" ]; then
+      why="it was for a prefix that has been replaced since"
+    elif ! same_volume "$leftover" "$WINEPREFIX"; then
+      why="it is not on the prefix's volume"
+    else
+      seed_scratch=$leftover
+      if unnest_seed_entry && merge_seed_tree check && merge_seed_tree move; then
+        echo "=== finished seeding this prefix, which an earlier launch left half done ===" \
+          >> "$log" 2>&1 || true
+        why=""
+      else
+        why="it could not be finished, wine completes this prefix"
+      fi
+      seed_scratch=""
+    fi
+    [ -z "$why" ] || dropping="$dropping${leftover##*/}|$why
+"
+  done
+  sweep_dead_seeds "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*
+  printf '%s' "$dropping" | while IFS='|' read -r name why; do
+    [ ! -e "$STEAM_COMPAT_DATA_PATH/$name" ] || continue
+    echo "=== dropped $name, an earlier launch's unfinished seed: $why ===" >> "$log" 2>&1 || true
+  done
 }
 
 prefix_is_bare() (
@@ -1698,7 +2279,7 @@ template_identity() (
 # Each game's prefix is copied from one template (per runner) instead of running wineboot.
 # On APFS the copy is a clone, so it takes almost no space.
 seed_prefix_from_template() {
-  sweep_dead_seeds "$STEAM_COMPAT_DATA_PATH"/pfx.seeding.*
+  finish_dead_seeds
   [ -n "$runner_id" ] || return 0
   if ! prefix_is_bare; then
     [ -f "$WINEPREFIX/system.reg" ] \
@@ -1891,6 +2472,8 @@ native_vc_runtime() {
 }
 
 if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
+  stage_step="anti-cheat check"
+  kernel_anticheat_notice
   export WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
   stage_step="prefix lock"
   prepare_prefix_directory
@@ -1899,10 +2482,17 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   printf '%s' "$WINEMSYNC" \
     > "$STEAM_COMPAT_DATA_PATH/notproton-msync" 2>/dev/null || true
   stage_step="prefix build check"
-  refuse_other_build
+  note_other_build
   stage_step="prefix arch check"
   refuse_foreign_prefix
+  prefix_was_new=0
+  [ -f "$WINEPREFIX/system.reg" ] || prefix_was_new=1
   claim_prefix
+  find_client_root "$STEAM_COMPAT_CLIENT_INSTALL_PATH"
+  note_prefix_volume
+  note_other_prefixes
+  stage_step="prefix switch check"
+  offer_switch_rebuild
   echo "sync: WINEMSYNC=$WINEMSYNC from $msync_from" >> "$log" 2>&1 || true
   if [ "${wine_unix##*/}" = aarch64-unix ]; then
     echo "fex: FEX_X87REDUCEDPRECISION=$FEX_X87REDUCEDPRECISION from $fex_from" >> "$log" 2>&1 || true
@@ -1910,7 +2500,7 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
     echo "avx: ROSETTA_ADVERTISE_AVX=$ROSETTA_ADVERTISE_AVX from $avx_from" >> "$log" 2>&1 || true
   fi
   without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
-  first_launch_notice
+  if [ "$prefix_was_new" = 1 ]; then launch_progress setup; else launch_progress prepare; fi
   stage_step="prefix seed"
   seed_prefix_from_template
   stage_step="profile layout"
@@ -1928,13 +2518,27 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   # A prefix that Wine built just now only has dosdevices from this point on.
   stage_step="game drive"
   map_game_drive
+  stage_step="prefix check"
+  refuse_broken_prefix
 fi
+low_power_notice
+launch_step prepare
 
 stage_step="graphics backend"
 select_backend "$1"
 activate_backend || true
 record_backend || true
-graphics_log "backend=$backend ($backend_from)"
+# An engine without lib/notproton-backends (CrossOver) picks its graphics itself, from
+# CX_GRAPHICS_BACKEND, so the log names that choice, not the dxmt-builtin placeholder.
+if [ "$backend" = dxmt-builtin ]; then
+  engine_backend=$(printf '%s' "${CX_GRAPHICS_BACKEND:-}" | tr '[:upper:]' '[:lower:]')
+  case "$engine_backend" in
+    d3dmetal|dxmt|dxvk|wined3d) graphics_log "backend=$engine_backend (CX_GRAPHICS_BACKEND, applied by the engine)" ;;
+    *) graphics_log "backend=engine-default (the engine picks its own graphics, CX_GRAPHICS_BACKEND is not set)" ;;
+  esac
+else
+  graphics_log "backend=$backend ($backend_from)"
+fi
 compose_dll_overrides
 [ -z "$backend_overrides" ] || graphics_log "backend overrides $backend_overrides"
 
@@ -2045,7 +2649,7 @@ link_legacy_steam_dll() {
   fi
 }
 
-bridge_files="steamclient64.dll steamclient.dll tier0_s64.dll vstdlib_s64.dll"
+bridge_files="steamclient64.dll steamclient.dll tier0_s64.dll vstdlib_s64.dll tier0_s.dll vstdlib_s.dll"
 bridge_files="$bridge_files lsteamclient.dll lsteamclient.so steam.exe"
 # A clone cannot cross drives, so a prefix on another drive clones from a copy of the
 # bridge kept beside that drive's templates.
@@ -2229,7 +2833,6 @@ cat > "$loader_contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
-  <key>LSSupportsGameMode</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSMicrophoneUsageDescription</key><string>This game would like to access your microphone.</string>
@@ -2251,15 +2854,18 @@ for f in "$wine_unix"/*; do
   ln -sfn "$f" "$loader_macos/$base"
 done
 ln "$WINELOADER" "$loader_macos/wine" 2>/dev/null || cp "$WINELOADER" "$loader_macos/wine"
-game_host=""
+original_loader=$WINELOADER
 if [ -x "$loader_macos/wine" ]; then
   WINELOADER="$loader_app/Contents/MacOS/wine"
-  if "$np_support/prepare-game-loader" "$loader_macos/wine" "$loader_contents/Info.plist" >> "$log" 2>&1; then
-    game_host="$np_support/game-host.dylib"
+  # A loader with com.apple.developer.* entitlements (CrossOver 27's, backed by a
+  # provisioning profile in its own wine.app) is killed when run from the game's bundle,
+  # so it runs where it is.
+  if /usr/bin/codesign -d --entitlements - "$loader_macos/wine" 2>/dev/null | grep -q 'com\.apple\.developer\.'; then
+    WINELOADER=$original_loader
+    echo "loader needs its own wine.app; running the engine's own loader" >> "$log" 2>&1 || true
   else
-    echo "embedded loader metadata unsupported; keeping original launcher behavior" >> "$log" 2>&1 || true
+    echo "loader staged in bundle for game mode" >> "$log" 2>&1 || true
   fi
-  echo "loader staged in bundle for game mode" >> "$log" 2>&1 || true
 else
   echo "loader staging failed, game mode unavailable" >> "$log" 2>&1 || true
 fi
@@ -2281,16 +2887,6 @@ elif [ -f "\$shim" ] && [ "\${NOTPROTON_FRAMEGEN:-0}" != 0 ] && [ "\$NOTPROTON_F
   # Frame generation lives in the shim, so it loads without the Steam overlay too.
   export DYLD_INSERT_LIBRARIES="\$shim"
   export NOTPROTON_OVERLAY_SHIM="\$shim"
-fi
-if [ -n "\$NOTPROTON_RUMBLE_LIBRARY" ] && [ -f "\$NOTPROTON_RUMBLE_LIBRARY" ]; then
-  export DYLD_INSERT_LIBRARIES="\$NOTPROTON_RUMBLE_LIBRARY\${DYLD_INSERT_LIBRARIES:+:\$DYLD_INSERT_LIBRARIES}"
-fi
-export NOTPROTON_GAME_LOADER="$WINELOADER"
-if [ -n "\$DSB_LIBRARY" ] && [ -f "\$DSB_LIBRARY" ]; then
-  export DYLD_INSERT_LIBRARIES="\$DSB_LIBRARY\${DYLD_INSERT_LIBRARIES:+:\$DYLD_INSERT_LIBRARIES}"
-fi
-if [ -n "$game_host" ]; then
-  export DYLD_INSERT_LIBRARIES="$game_host\${DYLD_INSERT_LIBRARIES:+:\$DYLD_INSERT_LIBRARIES}"
 fi
 [ -n "\$NOTPROTON_GAME_CWD" ] && cd "\$NOTPROTON_GAME_CWD"
 "$WINELOADER" "\$@"
@@ -2380,6 +2976,7 @@ kill_wine_prefix() {
 # termination signal to this run script, this handles it
 # shellcheck disable=SC2329 # the trap below invokes this
 terminate() {
+  np_terminated=1
   echo "=== termination signal received, killing wine prefix ===" >> "$log" 2>&1 || true
   kill_wine_prefix
   [ -n "$open_pid" ] && kill "$open_pid" 2>/dev/null || true
@@ -2398,21 +2995,31 @@ else
   echo "=== client staged no overlay renderer, overlay disabled ===" >> "$log" 2>&1 || true
 fi
 set -- --args "$shim_exe" "$@"
-for name in $(env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|SDL_GAMECONTROLLERCONFIG(_FILE)?|SDL_JOYSTICK_MFI|WINE_LARGE_ADDRESS_AWARE|WINE_CPU_TOPOLOGY|Steam[A-Za-z0-9]*|(CX_GRAPHICS|D3DM_|DXMT_|DXVK_|FEX_|MVK_|VKD3D_|STAGING_|MTL_|ROSETTA_)[A-Z0-9_]*|NOTPROTON_FRAMEGEN(_[A-Z]+)?|NOTPROTON_NGX_SIGNER|NOTPROTON_NVAPI_DRIVER|NOTPROTON_DRIVER_VERSION|NOTPROTON_STDOUT_NULL|NOTPROTON_VSYNC|CX_ACTIVE_GRAPHICS_BACKEND)=.*/\1/p'); do
+for name in $(env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|SDL_GAMECONTROLLERCONFIG(_FILE)?|SDL_JOYSTICK_MFI|WINE_LARGE_ADDRESS_AWARE|WINE_CPU_TOPOLOGY|CX_FWD_COMPAT_GL_CTX|Steam[A-Za-z0-9]*|(CX_GRAPHICS|D3DM_|DXMT_|DXVK_|FEX_|MVK_|VKD3D_|STAGING_|MTL_|ROSETTA_)[A-Z0-9_]*|NOTPROTON_FRAMEGEN(_[A-Z]+)?|NOTPROTON_NGX_SIGNER|NOTPROTON_NVAPI_DRIVER|NOTPROTON_DRIVER_VERSION|NOTPROTON_STDOUT_NULL|NOTPROTON_VSYNC|NOTPROTON_HIDE_WINE_EXPORTS|CX_ACTIVE_GRAPHICS_BACKEND)=.*/\1/p'); do
   eval "value=\$$name"
   # shellcheck disable=SC2154 # eval assigns value on the line above
   set -- --env "$name=$value" "$@"
 done
+
+# Anything this script does not know by name. A launch option NOTPROTON_ENV_FOO=bar gives
+# the game FOO=bar, which is the only per-game way to set one, and Wine and the graphics
+# layers take far more than the prefixes above.
+np_env_passed=$(env | LC_ALL=C sed -nE 's/^NOTPROTON_ENV_([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' \
+  | LC_ALL=C sort)
+for name in $np_env_passed; do
+  case "$name" in
+    (DYLD_* | PATH | HOME | CX_ROOT | CX_HOME | STEAM_COMPAT_* | STEAM_DYLD_INSERT_LIBRARIES | \
+     WINEPREFIX | WINELOADER | WINESERVER | WINEDLLPATH | WINEDLLOVERRIDES | WINEMSYNC | NOTPROTON_* | \
+     BRIDGEPLAY_*)
+      echo "=== NOTPROTON_ENV_$name would replace a setting this launch sets itself, ignored ===" \
+        >> "$log" 2>&1 || true
+      continue ;;
+  esac
+  eval "value=\$NOTPROTON_ENV_$name"
+  set -- --env "$name=$value" "$@"
+  echo "=== NOTPROTON_ENV_$name sets $name ===" >> "$log" 2>&1 || true
+done
 set -- \
-  --env NOTPROTON_RUMBLE_LIBRARY="${NOTPROTON_RUMBLE_LIBRARY:-}" \
-  --env NOTPROTON_STEAM_RUMBLE="${NOTPROTON_STEAM_RUMBLE:-}" \
-  --env NOTPROTON_RAW_CONTROLLERS="${NOTPROTON_RAW_CONTROLLERS:-}" \
-  --env DSB_SESSION="${DSB_SESSION:-}" \
-  --env DSB_LIBRARY="${DSB_LIBRARY:-}" \
-  --env DSB_PORT="${DSB_PORT:-}" \
-  --env DSB_TOKEN="${DSB_TOKEN:-}" \
-  --env DSB_RAW="${DSB_RAW:-}" \
-  --env DSB_PCM="${DSB_PCM:-}" \
   --env CX_ROOT="$CX_ROOT" \
   --env CX_HOME="$CX_HOME" \
   --env WINESERVER="$WINESERVER" \
@@ -2431,6 +3038,9 @@ set -- \
 lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/A"
 lsregister="$lsregister/Frameworks/LaunchServices.framework/Support/lsregister"
 [ -x "$lsregister" ] && "$lsregister" -f "$loader_app" >> "$log" 2>&1 || true
+np_started=$(date +%s)
+np_terminated=0
+launch_step start
 if [ "${NOTPROTON_LAUNCH_SERVICES:-0}" = "1" ]; then
   open -n -W -a "$loader_app" "$@" >> "$log" 2>&1 &
 else
@@ -2467,7 +3077,13 @@ open_pid=$!
 /usr/bin/caffeinate -d -i -w "$open_pid" >> "$log" 2>&1 &
 status=0
 wait "$open_pid" || status=$?
+launch_step ended
+np_ran=$(($(date +%s) - np_started))
 echo "=== game exited status=$status, killing wine prefix ===" >> "$log" 2>&1 || true
 kill_wine_prefix
+[ -z "$STEAM_COMPAT_DATA_PATH" ] \
+  || record_session "$loader_root/bridgeplay-wine.log" "$(($(date +%s) - np_started))" "$np_terminated"
+# After the teardown, so reading a long Wine log never holds the prefix up.
+exit_summary "$status" "$np_ran" "$np_terminated" "$loader_root/bridgeplay-wine.log" >> "$log" 2>&1 || true
 echo "=== wine prefix killed, session ending ===" >> "$log" 2>&1 || true
 exit $status

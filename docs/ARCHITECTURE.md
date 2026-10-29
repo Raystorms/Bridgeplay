@@ -16,9 +16,8 @@ each folder is, which process it ends up in, and where new code belongs.
 | `win32u-patch/`, `winemac-patch/`, `winebus-patch/`, `winecoreaudio-patch/`, `wined3d-patch/`, `ws2_32-patch/`, `ngx-signer-patch/` | Replacement Wine files inside the engine | Rebuilt binaries are committed in the app's Resources and copied over the engine at setup |
 | `nvapi-shim/` | Windows `nvapi64.dll` in the game (reports an NVIDIA driver so games offer DLSS) | Prebuilt in the app's Resources |
 | `overlay-shim/` | Mac dylib in the game process (HDR, Metal 4, frame generation) | `DYLD_INSERT_LIBRARIES` from the run script, or loaded by lsteamclient |
-| `controllers/dualsense/`, `controllers/steam-input/` | Bridge and rumble dylibs in the game, plus a `broker` process on loopback UDP | `DYLD_INSERT_LIBRARIES` from the run script |
 | `native-launch/` (`np-native`), `native-shim/` (`libnp_gamepad.dylib`) | Native Mac games | A Steam launch option re-execs the game with the shim inserted |
-| `helpers/` | Small CLIs the dylib and run script call (`iconmaker`, `appinfo`, `game-host`) | Application Support |
+| `helpers/` | Small CLIs the dylib and run script call (`iconmaker`, `appinfo`) | Application Support |
 | `gamefixes/` | Per-game defaults read by the run script | Bundled in the app payload and the installer |
 | `installer/` | `Install.command` and its config | Zipped by `scripts/package-installer.sh` |
 | `bridge/`, `scripts/`, `fonts/`, `compat/`, `vendor/` | Build tooling, the Proton font build, the compatibility table, vendored code | Build time only |
@@ -41,7 +40,7 @@ each folder is, which process it ends up in, and where new code belongs.
 | Something Steam does or shows | `dylib/` (and `signatures/` when it needs a new Steam function) |
 | How a game is launched, per-game environment | `dylib/feats/compat_run.sh`, `gamefixes/` |
 | A fix inside Wine | The matching `*-patch/` folder: a patch plus a README with the build recipe and sha256 pins, then the rebuilt binary in the app's Resources |
-| Something inside the game process on the Mac side | `overlay-shim/`, `controllers/` |
+| Something inside the game process on the Mac side | `overlay-shim/` |
 | Native Mac games | `native-launch/`, `native-shim/` |
 
 ## Naming

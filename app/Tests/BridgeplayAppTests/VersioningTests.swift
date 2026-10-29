@@ -59,6 +59,63 @@ struct ProductVersionTests {
             == "Bridgeplay 2.0.0 (32) · based on NotProton 1.2.0")
         #expect(ProductVersion.display(short: "0.1.0-dev", build: nil, upstream: nil) == "Bridgeplay 0.1.0-dev")
     }
+
+    // The committed version is a plain X.Y.Z. A beta label like 0.7.3-beta.1 is stamped into the
+    // built app by scripts/stamp-beta.sh and never committed.
+    @Test("The committed version is a plain X.Y.Z")
+    func committedVersionHasNoBetaLabel() throws {
+        let version = try Self.define("BRIDGEPLAY_VERSION")
+        let parts = version.split(separator: ".", omittingEmptySubsequences: false)
+        #expect(parts.count == 3 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isWholeNumber } },
+                "\(version)")
+    }
+
+    @Test("A stamped beta label shows in the display, with the build it carries")
+    func betaLabelDisplays() {
+        #expect(ProductVersion.display(short: "0.7.3-beta.1", build: "50", upstream: "1.2.0")
+            == "Bridgeplay 0.7.3-beta.1 (50) · based on NotProton 1.2.0")
+    }
+
+    @Test("A missing, empty or unreadable channel means stable")
+    func channelDefaultsToStable() {
+        #expect(ProductVersion.channel(from: "beta") == .beta)
+        #expect(ProductVersion.channel(from: " Beta\n") == .beta)
+        #expect(ProductVersion.channel(from: "stable") == .stable)
+        #expect(ProductVersion.channel(from: nil) == .stable)
+        #expect(ProductVersion.channel(from: "") == .stable)
+        #expect(ProductVersion.channel(from: "nightly") == .stable)
+        #expect(ProductVersion.channel(from: 1) == .stable)
+    }
+
+    private static func published(_ build: Int, _ label: String) -> DeploymentContent.Build {
+        DeploymentContent.Build(version: AppVersion.deployKey(build: String(build), display: label), builtAt: 1)
+    }
+
+    // Installs are ordered by the build alone. 0.7.3-beta.1 follows 0.7.2 (build 44) and
+    // the stable 0.7.3 is the number the betas were named after.
+    @Test("A beta orders above the stable it branched from, and the next stable above every beta")
+    func betaOrdering() {
+        let stable = Self.published(44, "0.7.2")
+        let beta1 = Self.published(45, "0.7.3-beta.1")
+        let beta2 = Self.published(46, "0.7.3-beta.2")
+        let next = Self.published(47, "0.7.3")
+        for beta in [beta1, beta2] {
+            #expect(beta.isNewer(than: stable) && !stable.isNewer(than: beta))
+            #expect(next.isNewer(than: beta) && !beta.isNewer(than: next))
+        }
+        #expect(beta2.isNewer(than: beta1) && !beta1.isNewer(than: beta2))
+        // Build 100 stays above 99: the build compares as a number, not as text.
+        #expect(Self.published(100, "0.7.4").isNewer(than: Self.published(99, "0.7.4-beta.9")))
+    }
+
+    @Test("A beta record is never taken for an older or newer build by its label")
+    func labelDoesNotOrder() {
+        // By label 0.10.0-beta.1 is above 0.9.0, and the build still decides.
+        let beta = Self.published(46, "0.10.0-beta.1")
+        let stable = Self.published(47, "0.9.0")
+        #expect(stable.isNewer(than: beta) && !beta.isNewer(than: stable))
+        #expect(AppVersion.label(deployed: AppVersion.deployKey(build: "46", display: "0.10.0-beta.1")) == "build 46")
+    }
 }
 
 @Suite("Post-update refresh")

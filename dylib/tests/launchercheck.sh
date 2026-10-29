@@ -11,6 +11,9 @@ loader_line=$(grep -A1 '^if \[ -x "\$loader_macos/wine" \]; then$' "$SRC" | sed 
 [ -n "$funcs" ] || { echo "FAIL: bundle functions not found"; exit 1; }
 [ -n "$name_lines" ] || { echo "FAIL: bundle name lines not found"; exit 1; }
 [ -n "$launcher_body" ] || { echo "FAIL: launcher script not found"; exit 1; }
+# A busy lock is waited out for 30 s; the lock contention case below needs it to give up.
+funcs=$(printf '%s\n' "$funcs" | sed 's|/usr/bin/lockf -s -t 30 7|/usr/bin/lockf -s -t 1 7|')
+printf '%s\n' "$funcs" | grep -q 'lockf -s -t 1 7' || { echo "FAIL: bundle lock wait not found"; exit 1; }
 eval "$funcs"
 
 fails=0
@@ -45,6 +48,14 @@ build() {
 }
 apps() { (cd "$loader_root" && for b in *.app; do [ -e "$b" ] && printf '%s|' "$b"; done; true); }
 plist_inode() { stat -f %i "$loader_app/Contents/Info.plist"; }
+# The lock is free once install_bundle returns. A loaded host has been seen to report it busy
+# for a moment anyway, so name the holders and allow 5 s; a leaked lock stays held.
+lock_free() {
+  /usr/bin/lockf -s -t 0 "$loader_root/.lock" true && return 0
+  echo "  note  lock busy right after install_bundle; holders:"
+  lsof "$loader_root/.lock" 2>&1 | sed 's/^/          /' || true
+  /usr/bin/lockf -s -t 5 "$loader_root/.lock" true
+}
 leftover() { (cd "$loader_root" && n=0 && for b in .build.*; do [ -e "$b" ] && n=$((n + 1)); done; echo "$n"); }
 
 echo "== final paths =="
@@ -125,7 +136,7 @@ is "same listing" "$(bundle_listing "$T/a")" "$(bundle_listing "$T/b")"
 
 echo "== lock =="
 build "OTHER NAME"
-if /usr/bin/lockf -s -t 0 "$loader_root/.lock" true; then ok "lock released"; else bad "lock released" "free" "held"; fi
+if lock_free; then ok "lock released"; else bad "lock released" "free" "held"; fi
 
 echo "== case twin =="
 rm -rf "$loader_root"/*.app
@@ -202,7 +213,7 @@ for failure in install backup signal signal-installed missing-stage restore; do
     is "signal after rename keeps new bundle" "$staged_inode" "$(plist_inode)"
     is "signal after rename does not nest old bundles" "Replacement.app|" "$(apps)"
     is "signal after rename cleans staging" "0" "$(leftover)"
-    if /usr/bin/lockf -s -t 0 "$loader_root/.lock" true; then ok "$failure releases lock"; else bad "$failure releases lock" "free" "held"; fi
+    if lock_free; then ok "$failure releases lock"; else bad "$failure releases lock" "free" "held"; fi
     continue
   fi
   if [ "$failure" = restore ]; then
@@ -213,7 +224,7 @@ for failure in install backup signal signal-installed missing-stage restore; do
   is "$failure keeps original name and inode" "$before" "$(stat -f %i "$loader_root/Original.app/Contents/Info.plist")"
   is "$failure restores visible bundles" "Original.app|Stray.app|" "$(apps)"
   if [ -d "$loader_root/.Hidden.app" ]; then ok "$failure keeps hidden bundle"; else bad "$failure keeps hidden bundle" "present" "missing"; fi
-  if /usr/bin/lockf -s -t 0 "$loader_root/.lock" true; then ok "$failure releases lock"; else bad "$failure releases lock" "free" "held"; fi
+  if lock_free; then ok "$failure releases lock"; else bad "$failure releases lock" "free" "held"; fi
   is "$failure cleans staging" "0" "$(leftover)"
 done
 
@@ -263,8 +274,9 @@ session_wait=$(sed -n '/^if \[ "\${NOTPROTON_LAUNCH_SERVICES:-0}" = "1" \]; then
 {
   printf 'log=%s\nopen() { sleep "$1"; return "$2"; }\n' "$T/session.log"
   printf 'kill_wine_prefix() { echo kill >> "%s"; }\n' "$T/session.ev"
+  printf 'exit_summary() { echo "summary $1 $3" >> "%s"; }\n' "$T/session.ev"
   printf '%s\n' "$session_trap"
-  printf 'set -- "$1" "$2"\nloader_app=x\nNOTPROTON_LAUNCH_SERVICES=1\n'
+  printf 'set -- "$1" "$2"\nloader_app=x\nnp_terminated=0\nNOTPROTON_LAUNCH_SERVICES=1\n'
   printf '%s\n' "$session_wait" | sed 's/open -n -W -a "\$loader_app" "\$@"/open "$@"/'
 } > "$T/session.sh"
 grep -q '^ *open "\$@"' "$T/session.sh" || { echo "FAIL: session launch line not rewritten"; exit 1; }
@@ -273,7 +285,8 @@ start=$(date +%s)
 rc=0; sh "$T/session.sh" 3 7 || rc=$?
 is "the shim's exit status is the session's" 7 "$rc"
 is "the session waits for the shim" yes "$([ $(($(date +%s) - start)) -ge 3 ] && echo yes || echo no)"
-is "the prefix is torn down once" kill "$(cat "$T/session.ev")"
+is "the prefix is torn down once, then the exit is summed up" "kill
+summary 7 0" "$(cat "$T/session.ev")"
 : > "$T/session.ev"
 start=$(date +%s)
 sh "$T/session.sh" 30 0 & sp=$!
@@ -283,6 +296,7 @@ rc=0; wait "$sp" || rc=$?
 is "exit game ends the session" 143 "$rc"
 is "exit game does not wait out the shim" yes "$([ $(($(date +%s) - start)) -lt 5 ] && echo yes || echo no)"
 is "exit game tears the prefix down" yes "$(grep -q kill "$T/session.ev" && echo yes || echo no)"
+is "exit game is summed up as stopped from Steam" "summary 143 1" "$(grep summary "$T/session.ev")"
 
 [ "$fails" -eq 0 ] || { echo "launchercheck: $fails failed"; exit 1; }
 echo "launchercheck: all passed"

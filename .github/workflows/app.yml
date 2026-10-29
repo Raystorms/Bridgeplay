@@ -1,22 +1,26 @@
 name: app
 
-# Markdown and docs/ changes build nothing. scripts/build-local.sh skips the same paths
-# when it reuses a passing run for a release.
+# Starts on every PR and every push to main and dev, so the "app gate" job below always
+# reports: it is the check a branch rule can require. The scope job decides whether the
+# change is docs-only (.github/docs-only-paths); if so the build and checks jobs are
+# skipped and the gate passes. scripts/build-local.sh reuses a run for a release only when
+# those two jobs ran and succeeded (scripts/ci-run-passed.sh), so keep their names.
 on:
   push:
-    branches: [main]
-    paths: ["**", "!**/*.md", "!docs/**"]
+    branches: [main, dev]
   pull_request:
-    paths: ["**", "!**/*.md", "!docs/**"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A newer push to the same PR replaces the run; pushes to main all finish.
+# A newer push to the same branch or PR replaces the run, so a feature commit and the
+# release bump pushed right after it don't hold the macOS runners twice. A release still
+# finds a passing run: build-local.sh accepts one on the bump commit (only version.h
+# differs). Every manual run has a group of its own and is never cancelled.
 concurrency:
-  group: app-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: app-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 env:
   DOBBY_COMMIT: "5dfc8546954ce3b3198132ab13fddb89ee92cdd7"
@@ -26,8 +30,28 @@ env:
   HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "1"
 
 jobs:
+  scope:
+    name: change scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+
+      - name: Decide whether the change is docs-only
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: sh scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+
   build:
     name: full app build
+    needs: scope
+    if: needs.scope.outputs.docs_only != 'true'
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -146,10 +170,14 @@ jobs:
       - name: Run the checks that need the built app
         run: make ci-checks-built
 
+      - name: Package the native installer
+        run: make native-installer
+
       - name: Package the app bundle
         run: |
           mkdir -p out/artifact
           ditto -c -k --keepParent out/Bridgeplay.app out/artifact/Bridgeplay.zip
+          cp out/Bridgeplay-Setup.zip out/artifact/
 
       - name: Upload the app bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -159,6 +187,8 @@ jobs:
 
   checks:
     name: source checks
+    needs: scope
+    if: needs.scope.outputs.docs_only != 'true'
     runs-on: xcode-27
     timeout-minutes: 20
     steps:
@@ -170,3 +200,23 @@ jobs:
       # Each check builds what it needs; none reads the app build.
       - name: Run the checks
         run: make ci-checks-source
+
+  # The one check a branch rule requires. always(): a skipped required check counts as
+  # passing, so a gate skipped because build or checks failed or were cancelled would let
+  # the change in. scripts/ci-gate.sh says what is green.
+  gate:
+    name: app gate
+    needs: [scope, build, checks]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check the verdict
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: sh scripts/ci-gate.sh

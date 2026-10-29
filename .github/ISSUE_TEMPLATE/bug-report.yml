@@ -2,6 +2,10 @@ name: Bug report
 description: Something in Bridgeplay doesn't work (setup, Steam, updates, controllers)
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Bridgeplay is a hobby project maintained part-time, so answers are best-effort and can take a while. If a game won't start, check the [compatibility list](https://bridgeplay.dev/compatibility) first; a game that doesn't run fits the Game report form better.
   - type: textarea
     id: what
     attributes:
@@ -29,5 +33,6 @@ body:
       label: Logs
       description: |
         Attach `~/Library/Application Support/bridgeplay/bridgeplay.log`. For a game, also
-        attach its `bridgeplay-run.log` (Prefixes page › the game › Open Log).
+        attach its `bridgeplay-run.log` (Prefixes page › the game › Open Log). For the
+        installer, attach `~/Library/Logs/Bridgeplay/installer.log`.
       render: text

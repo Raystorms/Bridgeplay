@@ -23,7 +23,8 @@ CFLAGS="-Os -fno-asynchronous-unwind-tables -ffreestanding -fno-stack-protector 
 "$CC" -c $CFLAGS detour32.c -o detour32_c.o \
   "-DFLAGS_SLOT=$NP_FLAGS_SLOT" "-DFLAGS_BIT=$NP_FLAGS_BIT" "-DLOAD_PATH_SLOT=$NP_LOAD_PATH"
 "$CC" -c -x assembler-with-cpp shim32.S -o shim32.o \
-  "-DWM_REG=$NP_WM" "-DSTOLEN_HEAD_BYTES=$NP_STOLEN_HEAD_BYTES" \
+  "-DWM_REG=$NP_WM" "-DWM_IN_EBX=$([ "$NP_WM" = ebx ] && echo 1 || echo 0)" \
+  "-DSTOLEN_HEAD_BYTES=$NP_STOLEN_HEAD_BYTES" \
   "-DSTOLE_BRANCH=${NP_STOLE_BRANCH:-0}"
 "$LD" -T link32.ld shim32.o detour32_c.o -o detour32_linked.elf \
   --defsym "CAVE_VA=$NP_PAYLOAD_VA" \

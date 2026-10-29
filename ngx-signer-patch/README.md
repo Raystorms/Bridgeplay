@@ -16,9 +16,11 @@ redirected check on a heap copy of the caller's `WINTRUST_DATA` and `WINTRUST_FI
 the caller's structs are only written where Windows writes them too (`hWVTStateData`); a
 `WTD_STATEACTION_VERIFY` copy stays alive until its `WTD_STATEACTION_CLOSE`.
 
-The committed `crypt32-winecx-11.17.dll` and `wintrust-winecx-11.17.dll` predate those two
-changes (system-directory match, struct copy). They need a rebuild, a DLSS check in a
-Streamline game, and new pins in `FreeEngineWinecx.swift`.
+The committed `crypt32-winecx-11.17.dll` and `wintrust-winecx-11.17.dll` were rebuilt with
+those two changes (system-directory match, struct copy) on 2026-10-24 and repinned. Built
+from the earlier patch, the recipe below reproduced the previous binaries except the PE
+timestamp, checksum, build id and the source path in assert strings. The rebuilt pair has not
+been checked in a Streamline game yet.
 
 Verified 2026-10-12: RE Requiem lists NVIDIA DLSS; 007 First Light logs
 `Loaded NGXCore from path (C:\windows\system32\nvngx.dll)`.

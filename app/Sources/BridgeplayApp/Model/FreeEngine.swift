@@ -181,7 +181,7 @@ enum FreeEngine {
     // Files that are absent or differ from the pinned hash.
     static func layoutProblems(root: URL, release: FreeEngineRelease = current) -> [String] {
         expectedFiles(release).filter { path, hash in
-            Digest.sha256IfPresent(root.appending(path: path)) != hash
+            !SignedPin.matches(root.appending(path: path), sha256: hash)
         }.keys.sorted()
     }
 
@@ -208,7 +208,7 @@ enum FreeEngine {
     // Puts the bundled winemac-<build>.so, checked against its pin, over the engine's own.
     static func installMacDriver(root: URL, build: String, sha256: String, step: String) throws {
         guard let source = Bundle.module.url(forResource: "winemac-\(build)", withExtension: "so"),
-              Digest.sha256IfPresent(source) == sha256
+              SignedPin.matches(source, sha256: sha256)
         else {
             throw StepFailure(step: step, detail: "Bridgeplay is missing its winemac.so for \(build).")
         }
@@ -308,7 +308,7 @@ enum FreeEngine {
         ]
         let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         try plist.write(to: shaped.appending(path: "Contents/Info.plist"))
-        RunnerInstaller.scrubDownloadMarkers(at: shaped)
+        RunnerInstaller.clearQuarantine(at: shaped)
 
         let install = CrossOverSource.inspect(bundle: shaped)
         guard case .supported(let build) = install.support, build.id == release.build else {
