@@ -68,7 +68,9 @@ mkdir -p "$stage/patches"
 for d in $patch_dirs; do
 	cp -R "$d" "$stage/patches/$d"
 done
-cp docs/WINECX.md NOTICE LICENSE.wine "$stage/"
+# Not NOTICE: it names this archive's own sha256, so bundling it would make the archive's
+# bytes, and so its sha256, depend on what was last pasted into NOTICE.
+cp docs/WINECX.md LICENSE.wine "$stage/"
 
 extract() {
 	short=$(git -C "$mirror" rev-parse --short=12 "$1")
@@ -92,14 +94,19 @@ NOTICE lists under "Patched Wine (WineCX) binaries" ($id):
 - \`patches/\`: this repository's patches and build recipes, one directory per binary,
   copied as of this archive.
 - \`WINECX.md\`: how Bridgeplay lays the binaries over the engine and the per-binary build
-  recipes; \`NOTICE\`: the full list mapping each shipped file to its source commit and
-  patch; \`LICENSE.wine\`: Wine's license notice and the LGPL-2.1 text.
+  recipes; \`LICENSE.wine\`: Wine's license notice and the LGPL-2.1 text. The full list
+  mapping each shipped file to its source commit and patch is NOTICE, in the Bridgeplay
+  repository (https://github.com/raymondchins/Bridgeplay/blob/main/NOTICE).
 
 Built by \`scripts/package-wine-patch-sources.sh\`.
 EOF
 
-find "$stage" -type d -exec chmod 755 {} + -o -type f -exec chmod 644 {} +
-find "$stage" -exec touch -h -t 202601010000 {} +
+# Keep each file's executable bit: winecx's configure and its own build scripts need it
+# to match the "Rebuilding" recipes in docs/WINECX.md and each patch's README.
+find "$stage" -type d -exec chmod 755 {} +
+find "$stage" -type f -perm -u+x -exec chmod 755 {} +
+find "$stage" -type f ! -perm -u+x -exec chmod 644 {} +
+find "$stage" -exec env TZ=UTC touch -h -t 202601010000 {} +
 (cd "$work" && find "$name" -type f | LC_ALL=C sort) >"$work/list"
 mkdir -p out
 archive=out/$name.tar.gz
