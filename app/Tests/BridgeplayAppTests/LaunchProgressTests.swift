@@ -9,13 +9,14 @@ struct LaunchProgressTests {
     private let first = LaunchProgress(firstLaunch: true)
     private let later = LaunchProgress(firstLaunch: false)
 
-    @Test("A first launch shows almost at once, a later one only when it is slow")
+    @Test("A first launch shows almost at once, a later one shortly after")
     func delays() {
         #expect(first.action(step: .setup, elapsed: 0.5, launchEnded: false, gameWindow: false) == .hidden)
         #expect(first.action(step: .setup, elapsed: 1, launchEnded: false, gameWindow: false) == .shown(.setup))
-        // Hell Maiden's relaunch opened its window 12s in, which must not flash a panel.
-        #expect(later.action(step: .start, elapsed: 12, launchEnded: false, gameWindow: false) == .hidden)
-        #expect(later.action(step: .start, elapsed: 20, launchEnded: false, gameWindow: false) == .shown(.start))
+        // Hell Maiden's relaunch opened its window 12s in; most relaunches land around there, so
+        // the delay must be well under that to actually show for them.
+        #expect(later.action(step: .start, elapsed: 2, launchEnded: false, gameWindow: false) == .hidden)
+        #expect(later.action(step: .start, elapsed: 3, launchEnded: false, gameWindow: false) == .shown(.start))
     }
 
     @Test("The game's window, the end of the launch or its end take the panel away")
@@ -24,7 +25,7 @@ struct LaunchProgressTests {
         #expect(first.action(step: .setup, elapsed: 30, launchEnded: true, gameWindow: false) == .quit)
         #expect(first.action(step: .ended, elapsed: 30, launchEnded: false, gameWindow: false) == .quit)
         // Before its delay too, so a fast launch never shows it.
-        #expect(later.action(step: .start, elapsed: 3, launchEnded: false, gameWindow: true) == .quit)
+        #expect(later.action(step: .start, elapsed: 2, launchEnded: false, gameWindow: true) == .quit)
         #expect(later.action(step: .start, elapsed: LaunchProgress.limit, launchEnded: false, gameWindow: false) == .quit)
     }
 

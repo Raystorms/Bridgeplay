@@ -45,8 +45,9 @@ enum LaunchStep: String {
 
 struct LaunchProgress {
     // A later launch that shows its window within this many seconds shows nothing. Hell Maiden
-    // took 12s from the run script to its window on an M4, its first launch 27 to 76s.
-    static let laterDelay: TimeInterval = 20
+    // took 12s from the run script to its window on an M4, so most relaunches would never show
+    // the panel at 20s; 3s still skips a launch that fails straight away but catches those.
+    static let laterDelay: TimeInterval = 3
     // Long enough that a launch failing straight away does not flash the panel.
     static let firstDelay: TimeInterval = 1
     // In case the game hangs before opening anything; Steam's Stop still ends it.
