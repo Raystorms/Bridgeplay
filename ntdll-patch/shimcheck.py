@@ -211,20 +211,84 @@ def pinned(resolve_py):
     raise SystemExit(f"{resolve_py}: no PINNED table")
 
 
+def string_end(t, k):
+    """If a Swift string literal starts at t[k], the index just past it, else None.
+
+    Handles raw (#"..."#), multi-line and interpolated ("\(f("x"))") strings.
+    """
+    n = len(t[k:]) - len(t[k:].lstrip('#'))
+    q = k + n
+    if not t.startswith('"', q):
+        return None
+    quote = '"""' if t.startswith('"""', q) else '"'
+    close, escape = quote + '#' * n, '\\' + '#' * n
+    e = q + len(quote)
+    while e < len(t):
+        if t.startswith(close, e):
+            return e + len(close)
+        if t.startswith(escape, e):
+            e += len(escape)
+            if t.startswith('(', e):
+                e = closing(t, e) + 1
+            else:
+                e += 1
+        else:
+            e += 1
+    raise SystemExit(f"unterminated string at {k}")
+
+
+def comment_end(t, k):
+    """If a Swift comment starts at t[k], the index just past it, else None."""
+    if t.startswith('//', k):
+        e = t.find('\n', k)
+        return len(t) if e < 0 else e
+    if not t.startswith('/*', k):
+        return None
+    depth, e = 0, k
+    while e < len(t):                   # Swift block comments nest
+        if t.startswith('/*', e):
+            depth, e = depth + 1, e + 2
+        elif t.startswith('*/', e):
+            depth, e = depth - 1, e + 2
+            if not depth:
+                return e
+        else:
+            e += 1
+    raise SystemExit(f"unterminated comment at {k}")
+
+
+def uncommented(text):
+    """Swift source with its comments blanked, so a commented-out pin is not read."""
+    out, k = [], 0
+    while k < len(text):
+        e = comment_end(text, k)
+        if e is not None:
+            out.append(' ')
+            k = e
+            continue
+        e = string_end(text, k) if text[k] in '#"' else None
+        if e is not None:
+            out.append(text[k:e])
+            k = e
+            continue
+        out.append(text[k])
+        k += 1
+    return ''.join(out)
+
+
 def closing(text, i):
-    """Index of the bracket that closes text[i], skipping Swift strings and line comments."""
+    """Index of the bracket that closes text[i], skipping Swift strings and comments."""
     depth, k = 0, i
     while k < len(text):
-        c = text[k]
-        if c == '"':
-            k += 1
-            while text[k] != '"':
-                k += 2 if text[k] == '\\' else 1
-        elif text.startswith('//', k):
-            k = text.index('\n', k)
-        elif c in '([':
+        e = comment_end(text, k)
+        if e is None and text[k] in '#"':
+            e = string_end(text, k)
+        if e is not None:
+            k = e
+            continue
+        if text[k] in '([':
             depth += 1
-        elif c in ')]':
+        elif text[k] in ')]':
             depth -= 1
             if not depth:
                 return k
@@ -244,7 +308,7 @@ def swift_pins(sources):
     """
     patches, builds = {}, {}
     for f in sorted(pathlib.Path(sources).rglob('*.swift')):
-        text = f.read_text()
+        text = uncommented(f.read_text())
         owners = []
         for m in re.finditer(r'\bRunnerBuild\(', text):
             body = text[m.end():closing(text, m.end() - 1)]

@@ -151,6 +151,34 @@ class Pins(unittest.TestCase):
                           'for cc8a9035cea0', out)
             self.assertIn('19 of 20', out)
 
+    def test_commented_out_clean_hash_is_not_read(self):
+        old = 'cc8a9035cea0e26c5d333ef220f1becefc27ae44d2cdcdaea3278e8739d26fd9'
+        for keep in ('// .i386Windows: "{old}",\n', '/* .i386Windows: "{old}", /* nested */ */\n'):
+            with self.subTest(keep[:2]), tempfile.TemporaryDirectory() as d:
+                d = pathlib.Path(d)
+                shutil.copytree(ROOT / 'app/Sources', d / 'app/Sources')
+                (d / 'ntdll-patch').mkdir()
+                shutil.copy(ROOT / 'ntdll-patch/resolve.py', d / 'ntdll-patch/resolve.py')
+                swift = d / 'app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift'
+                text = swift.read_text()
+                line = f'.i386Windows: "{old}",\n'
+                self.assertEqual(text.count(line), 1)
+                swift.write_text(text.replace(line, keep.format(old=old) + f'.i386Windows: "{"ab" * 32}",\n'))
+                rc, out = quiet(['--root', str(d)])
+                self.assertEqual(rc, 1, out)
+                self.assertIn('patches the i386Windows ntdll abababababab, but this payload', out)
+
+    def test_swift_lexing(self):
+        src = ('a("x\\(f("y)"))z", #"q"z\\("#, """\nm "" \\(g(")"))\n""") // c )\n'
+               '/* a /* b */ ) */ b ]')
+        self.assertEqual(shimcheck.closing(src, 1), src.index('""")') + 3)
+        self.assertNotIn('// c', shimcheck.uncommented(src))
+        self.assertNotIn('/* a', shimcheck.uncommented(src))
+        self.assertIn('"x\\(f("y)"))z"', shimcheck.uncommented(src))
+        self.assertEqual(shimcheck.uncommented('x = "// not a comment" // one'), 'x = "// not a comment"  ')
+        for f in (ROOT / 'app/Sources').rglob('*.swift'):
+            shimcheck.uncommented(f.read_text())
+
     def test_every_payload_has_its_build(self):
         patches, builds = shimcheck.swift_pins(ROOT / 'app/Sources')
         for f in RES.glob('detour*.bin'):
