@@ -124,9 +124,9 @@ fonts_tag=${fonts_archive%.tar.xz}
 gh release view "$fonts_tag" -R "$slug" --json assets -q '.assets[].name' 2>/dev/null | grep -qx "$fonts_archive" \
 	|| check "$fonts_tag has no $fonts_archive on GitHub; run scripts/package-fonts.sh --publish"
 
-# This release ships the patched WineCX binaries in Resources/; NOTICE's written offer for
-# their source points at wine-patch-sources-* (scripts/package-wine-patch-sources.sh), so
-# that offer does not depend only on the third-party winecx repository staying online.
+# This release ships the patched WineCX binaries in Resources/; the license asks Bridgeplay
+# to also provide their source, which NOTICE's written offer points at wine-patch-sources-*
+# (scripts/package-wine-patch-sources.sh).
 wine_src_archive=$(sed -n 's/^  \(wine-patch-sources-[0-9a-f]*\.tar\.gz\), sha256$/\1/p' NOTICE)
 [ -n "$wine_src_archive" ] || die "no wine-patch-sources archive pinned in NOTICE"
 wine_src_tag=${wine_src_archive%.tar.gz}

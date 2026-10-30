@@ -51,13 +51,12 @@ later (LGPL-2.1-or-later); these files keep that license. Wine's license notice
 and the LGPL-2.1 text ship in the app as LICENSE.wine. Build recipes and
 sha256 pins are in docs/WINECX.md and each patch directory's README.
 
-The Corresponding Source for these binaries is winecx at the commits named below
-(https://github.com/dappermint/winecx, a third-party repository), plus the
-patches above. So that offer does not depend only on that repository staying
-online, Bridgeplay also archives winecx's source at those commits and the
-patches together, built by scripts/package-wine-patch-sources.sh and published
-on this project's own releases (see the written offer below for the current
-archive's name and sha256).
+The Corresponding Source for these binaries is winecx
+(https://github.com/dappermint/winecx) at the commits named below, plus the
+patches above. LGPL-2.1-or-later asks whoever distributes the binaries to also
+provide that source, so Bridgeplay publishes a copy of it alongside the
+patches, built by scripts/package-wine-patch-sources.sh (see the written offer
+below for the current archive's name and sha256).
 
   WineCX 11.17 (winecx e0aa380780b73e20fabcfe78fd42713b94929a53, runtime 4.7.3):
     win32u-winecx-11.17.so        win32u-patch/patch-driver-version.sh (binary
@@ -147,13 +146,13 @@ three years after the last release that ships them, Raymond Chin will also
 provide that source on request, for no more than the cost of providing it; open
 an issue at https://github.com/raymondchins/Bridgeplay/issues.
 
-So that this offer does not depend only on those third-party repositories staying
-online, Bridgeplay also keeps its own copy of the winecx source behind the
-patched Wine files, packed with the patches and recipes by
+The LGPL and this offer ask Bridgeplay to provide that source alongside the
+binaries it distributes, so Bridgeplay also publishes a copy of the winecx
+source behind the patched Wine files, packed with the patches and recipes by
 scripts/package-wine-patch-sources.sh:
 
-  wine-patch-sources-c5974940e0fd.tar.gz, sha256
-  2db0e37c2a72173b1047dc178ae85d44118b3571e3aab003bb209a2a1f484b66, published on
+  wine-patch-sources-3a3a0ee26fca.tar.gz, sha256
+  722c6efb34d4855fde2b7cb934049aef925c64700a099145b685771759384f5d, published on
   this project's release of the same name. Covers winecx e0aa380780b73e20fabcfe78fd42713b94929a53
   and 5b45f4564c4f87fa9c0f958733a5e9bb3918a058 (the commits named above) plus the patch
   directories they are built from. Rebuild it (same id and sha256 for the same

@@ -322,8 +322,8 @@ MANIFEST="$OUT/dxmt-$SHORT.sha256"
 # --- source tarball ----------------------------------------------------------------
 # Corresponding Source (LGPL-2.1-or-later): the exact worktree this build ran from,
 # submodules included (DXMT vendors external/nvapi and include/native/directx that
-# way), without git's own metadata. Hosted beside the binaries so the source does not
-# depend on 3Shain/dxmt staying online.
+# way), without git's own metadata. LGPL-2.1-or-later asks whoever distributes this
+# build to also provide that source, so it ships beside the binaries.
 SRC_STAGE="$OUT/stage-source"
 SRC_TREE="$SRC_STAGE/$SHORT"
 rm -rf "$SRC_STAGE"

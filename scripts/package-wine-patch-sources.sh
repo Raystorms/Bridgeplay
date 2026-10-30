@@ -8,11 +8,11 @@
 #   scripts/package-wine-patch-sources.sh            pack, then print the pin for NOTICE
 #   scripts/package-wine-patch-sources.sh --publish  also create the GitHub release that hosts it
 #
-# Today the source for these binaries is winecx itself (a single-maintainer repository,
-# https://github.com/dappermint/winecx) plus the patches here. This closes the gap: Bridgeplay
-# keeps its own copy of winecx's source at the exact commits it patches, so the written offer
-# in NOTICE does not depend on that repository staying online. Run it again whenever
-# docs/WINECX.md's winecx pins change, then run with --publish and update NOTICE's pin.
+# The source for these binaries is winecx (https://github.com/dappermint/winecx) at the
+# exact commits patched, plus the patches here. LGPL-2.1-or-later asks whoever distributes
+# the binaries to also provide that source, so Bridgeplay publishes it alongside its own
+# releases, crediting winecx as the source. Run it again whenever docs/WINECX.md's winecx
+# pins change, then run with --publish and update NOTICE's pin.
 set -eu
 
 die() { echo "==> $*" >&2; exit 1; }

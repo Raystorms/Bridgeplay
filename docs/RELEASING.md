@@ -246,12 +246,12 @@ have them from earlier apps, so they download nothing. When `fonts/` changes:
 ## WineCX patch source
 
 The Corresponding Source for the patched Wine (WineCX) binaries in `app/Sources/BridgeplayApp/Resources/`
-(NOTICE, "Patched Wine (WineCX) binaries") is winecx at the pinned commits plus the patches in
-this repository. `scripts/package-wine-patch-sources.sh` archives both onto a
-`wine-patch-sources-<id>` release of this project, so that offer does not depend only on
-`dappermint/winecx` staying online; `<id>` comes from the pinned commits and the patch files, so
-unchanged pins and patches give the same name and sha256. When `docs/WINECX.md`'s winecx pins or
-any of the patch directories change:
+(NOTICE, "Patched Wine (WineCX) binaries") is winecx (`dappermint/winecx`) at the pinned
+commits plus the patches in this repository. LGPL-2.1-or-later asks whoever distributes the
+binaries to also provide that source, so `scripts/package-wine-patch-sources.sh` publishes
+both onto a `wine-patch-sources-<id>` release of this project; `<id>` comes from the pinned
+commits and the patch files, so unchanged pins and patches give the same name and sha256.
+When `docs/WINECX.md`'s winecx pins or any of the patch directories change:
 
 1. `scripts/package-wine-patch-sources.sh`. Copy the pin it prints into NOTICE.
 2. `scripts/package-wine-patch-sources.sh --publish` creates the release. `release-local.sh`
