@@ -152,8 +152,8 @@ online, Bridgeplay also keeps its own copy of the winecx source behind the
 patched Wine files, packed with the patches and recipes by
 scripts/package-wine-patch-sources.sh:
 
-  wine-patch-sources-1886c290170e.tar.gz, sha256
-  839c49b427201bf9c1a04a03354cc31f9a8bce06255796769a03a975a680c570, published on
+  wine-patch-sources-b21dda04cf35.tar.gz, sha256
+  d37df5b8741b05c71c2691f63abbc28da292f6e4102681f0939c491cc1657fe6, published on
   this project's release of the same name. Covers winecx e0aa380780b73e20fabcfe78fd42713b94929a53
   and 5b45f4564c4f87fa9c0f958733a5e9bb3918a058 (the commits named above) plus the patch
   directories they are built from. Rebuild it (same id and sha256 for the same

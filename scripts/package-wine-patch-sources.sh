@@ -53,7 +53,7 @@ id=$(
 				shasum -a 256 "$f"
 			done
 		done
-		shasum -a 256 docs/WINECX.md LICENSE.wine "$repo/scripts/package-wine-patch-sources.sh"
+		shasum -a 256 docs/WINECX.md LICENSE.wine scripts/package-wine-patch-sources.sh
 	} | shasum -a 256 | cut -c1-12
 )
 name=wine-patch-sources-$id
@@ -80,12 +80,18 @@ done
 # Not NOTICE: it names this archive's own sha256, so bundling it would make the archive's
 # bytes, and so its sha256, depend on what was last pasted into NOTICE.
 cp docs/WINECX.md LICENSE.wine "$stage/"
+# Only their content is hashed into id above, not their mode; force a fixed mode so a
+# stray +x in the working tree can't change the archive's bytes under an unchanged id.
+chmod 644 "$stage/WINECX.md" "$stage/LICENSE.wine"
 
 extract() {
 	short=$(git -C "$mirror" rev-parse --short=12 "$1")
 	dest="$stage/winecx-$2-$short"
 	mkdir -p "$dest"
-	git -C "$mirror" archive --format=tar "$1" | tar -x -C "$dest"
+	# tar.umask defaults to the archiving user's git config (0002, or their umask if set to
+	# "user"), so without pinning it here the modes git archive writes, and so what the
+	# chmod pass below normalizes them to, would depend on whoever runs this script.
+	git -c tar.umask=0022 -C "$mirror" archive --format=tar "$1" | tar -x -C "$dest"
 }
 extract "$sha_1117" 11.17
 extract "$sha_1115" 11.15
