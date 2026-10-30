@@ -37,18 +37,23 @@ sha_1117=$(sed -n 's/^  WineCX 11\.17 (winecx \([0-9a-f]\{40\}\), runtime.*/\1/p
 sha_1115=$(sed -n 's/^  WineCX 11\.15 (winecx \([0-9a-f]\{40\}\), runtime.*/\1/p' NOTICE)
 [ -n "$sha_1117" ] && [ -n "$sha_1115" ] || die "could not read the winecx pins from NOTICE"
 
-# The id covers every input that ends up in the archive (except the generated README.md,
-# which is fully determined by these same inputs): the two commits, every patch file, and
-# the two recipe/license files copied in below. So any of them changing, not just the
-# pins, gives a new id, and --publish never mistakes stale content for what's already
-# published under an unchanged name.
+# The id covers every input that determines the archive's bytes (except the generated
+# README.md, whose only variables -- $id and the two short shas -- are themselves already
+# hashed below): the two commits, every patch file's content and executable bit, the two
+# recipe/license files copied in below, and this script itself (its README template and
+# winecx_url are otherwise invisible to the hash). So any of them changing gives a new id,
+# and --publish never mistakes stale content for what's already published under an
+# unchanged name.
 id=$(
 	{
 		printf '%s\n%s\n' "$sha_1117" "$sha_1115"
 		for d in $patch_dirs; do
-			find "$d" -type f | LC_ALL=C sort | while read -r f; do shasum -a 256 "$f"; done
+			find "$d" -type f | LC_ALL=C sort | while read -r f; do
+				stat -f '%Lp' "$f"
+				shasum -a 256 "$f"
+			done
 		done
-		shasum -a 256 docs/WINECX.md LICENSE.wine
+		shasum -a 256 docs/WINECX.md LICENSE.wine "$repo/scripts/package-wine-patch-sources.sh"
 	} | shasum -a 256 | cut -c1-12
 )
 name=wine-patch-sources-$id
