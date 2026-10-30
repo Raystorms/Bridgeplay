@@ -70,7 +70,7 @@ class BeforeTheFix(unittest.TestCase):
                 (d / rel).write_text(src.replace(new_sha, old_sha))
             rc, out = quiet(['--root', str(d)])
             self.assertEqual(rc, 1, out)
-            self.assertIn('FAIL detour32-winecx-11.17.bin: the detour call at +0x68 gets wm=ebp', out)
+            self.assertIn('FAIL detour32-winecx-11.17.bin: for ntdll cc8a9035cea0, the detour call at +0x68 gets wm=ebp', out)
             self.assertIn('19 of 20', out)
 
 
@@ -178,6 +178,28 @@ class Pins(unittest.TestCase):
         self.assertEqual(shimcheck.uncommented('x = "// not a comment" // one'), 'x = "// not a comment"  ')
         for f in (ROOT / 'app/Sources').rglob('*.swift'):
             shimcheck.uncommented(f.read_text())
+
+    def test_every_pinned_ntdll_the_payload_serves_is_checked(self):
+        # The 26.3 China rebuild's i386 ntdll pinned with the cx26 payload, but keeping wm in
+        # ebx: the payload hands over esi, so it is wrong for that ntdll.
+        rebuild = '21e7d0a6d6868f1853489f5a9798e706509a20a65ee370f50b37ab7b1cdcaae3'
+        cx26 = '2c60ee6b00dd13b7f6cb11017778a041ba6a321eaea194f1fa0dca7eab8403e2'
+        for wm, rc_want in (('esi', 0), ('ebx', 1)):
+            with self.subTest(wm), tempfile.TemporaryDirectory() as d:
+                d = pathlib.Path(d)
+                shutil.copytree(ROOT / 'app/Sources', d / 'app/Sources')
+                (d / 'ntdll-patch').mkdir()
+                src = (ROOT / 'ntdll-patch/resolve.py').read_text()
+                entry = dict(PINS[cx26], wm=wm)
+                (d / 'ntdll-patch/resolve.py').write_text(
+                    src.replace('PINNED = {\n', f'PINNED = {{\n    {rebuild!r}: {entry!r},\n', 1))
+                rc, out = quiet(['--root', str(d)])
+                self.assertEqual(rc, rc_want, out)
+                if rc_want:
+                    self.assertIn(f'FAIL detour32-cx26.bin: for ntdll {rebuild[:12]}, the detour '
+                                  f'call at +0x68 gets wm=esi', out)
+                else:
+                    self.assertIn(f'ntdll {rebuild[:12]} keeps wm in esi', out)
 
     def test_every_payload_has_its_build(self):
         patches, builds = shimcheck.swift_pins(ROOT / 'app/Sources')
