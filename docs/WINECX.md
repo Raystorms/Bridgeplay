@@ -404,7 +404,7 @@ every other shipped file are in [Shipped binaries](#shipped-binaries).
 | clean x86_64 ntdll | `5710d16382c7a822ed8b1cba58d95fd86fe01905f039c296ca7224abff8f98e8` |
 | patched x86_64 ntdll | `4efd956e573726777827cddaa89ef3b7f72d6cfd7b8e2049e41f5f5bdf4a6306` |
 | clean i386 ntdll | `e1b208073c804a443e64ada577899d96a5c8eaee435813e4a30e0d143bca6e3c` |
-| patched i386 ntdll | `23ee72664f172d38d76ecb8969d5c5af7e6828864dfe298338ed0e773910bc5d` |
+| patched i386 ntdll | `ffdf7f49a4b07b582a1172092a4af452b5beb7377b59f423cb2d1a1e9c18c9af` |
 
 The unpack test (`FreeEngineWinecxTests.unpacksRealArchive`, once per release) checks all of
 this against the real archive when `NOTPROTON_WINECX_ARCHIVE` points at it, or when it sits in
@@ -460,7 +460,7 @@ rebuilt Mach-O file needs its line there updated too; `SignedPinTests` fails unt
 | `detour32-fex-41069.bin` | `ntdll-patch/build32.sh` (fex-41069) | `6ff6c7289e639c4caad85c2670bfa849d9f36baa24152b6979896caede5e249b` | `NtdllPatcher.byBuild` |
 | `detour32-fex-41073.bin` | `ntdll-patch/build32.sh` (fex-41073) | `e0b3a73bb287ecdebe7a9516a732b60e8de95fa0a756ae5ea4c5bd46e4a807c2` | `NtdllPatcher.byBuild` |
 | `detour32-fex.bin` | `ntdll-patch/build32.sh` (fex) | `b4c697ba396ecb59125c505666ad3465d1208b8a1e3e53a0c457657b341376b9` | `NtdllPatcher.byBuild` |
-| `detour32-winecx-11.15.bin` | `ntdll-patch/build32.sh` (winecx-11.15) | `37daf5f795535df91bc8fcbd356f22f4fd1ab379ec4acc97ddff44037d265556` | `FreeEngineWinecx.v1115.ntdllPatches` |
+| `detour32-winecx-11.15.bin` | `ntdll-patch/build32.sh` (winecx-11.15) | `b8363acbaeedeb5f22379e0ec6394cf721c384f484b80e1f51a08fb74e41d13b` | `FreeEngineWinecx.v1115.ntdllPatches` |
 | `detour32-winecx-11.17.bin` | `ntdll-patch/build32.sh` (winecx-11.17) | `085df281ffe81c2803f44dd30df885248e5510c8560f0f20a5ae36e8446f7559` | `FreeEngineWinecx.v1117.ntdllPatches` |
 | `detour32-winehq-11.15.bin` | `ntdll-patch/build32.sh` (winehq-11.15) | `527431a3a74e9dff7bc3582277ddfa7b44bcac6fba285c028fd2c94fd9202418` | `NtdllPatcher.byBuild` |
 | `detour32.bin` | `ntdll-patch/build32.sh` (rosetta) | `2758d4f6783c853c460187f83f4fb9b1105380d194126ef83fc85e2596d3036a` | `NtdllPatcher.byBuild` |
