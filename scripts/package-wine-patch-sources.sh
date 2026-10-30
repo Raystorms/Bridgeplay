@@ -91,7 +91,11 @@ extract() {
 	# tar.umask defaults to the archiving user's git config (0002, or their umask if set to
 	# "user"), so without pinning it here the modes git archive writes, and so what the
 	# chmod pass below normalizes them to, would depend on whoever runs this script.
-	git -c tar.umask=0022 -C "$mirror" archive --format=tar "$1" | tar -x -C "$dest"
+	# core.attributesFile defaults to a path under the user's home directory; export-ignore
+	# or export-subst rules there would change which files or bytes come out of this archive
+	# without changing winecx's pinned commit, so point it at nothing instead.
+	git -c tar.umask=0022 -c core.attributesFile=/dev/null \
+		-C "$mirror" archive --format=tar "$1" | tar -x -C "$dest"
 }
 extract "$sha_1117" 11.17
 extract "$sha_1115" 11.15
