@@ -84,7 +84,7 @@ DEPS := $(OBJS:.o=.d)
         anchorcheck callscheck sigdb-fixtures webpatch-fixtures peicon-fixtures panel-behavior app-tests \
         tests-list overlay-shim overlay-shim-install overlay-shim-tests \
         overlay-shim-bench iconmaker icon \
-        appinfo helpers-install ntdll-resolve bridge runcheck compatcheck \
+        appinfo helpers-install ntdll-resolve detourcheck bridge runcheck compatcheck \
         compatsvc-check prefixstate-check shortcutcheck scriptcheck envcheck buildcheck settingscheck routecheck bridgecheck envpasscheck prefixnotecheck powernotecheck exitcheck anticheatcheck launchprogresscheck gamedrivecheck \
         gamefixescheck launchercheck padcheck launch-shell activatecheck stamp-check versioncheck cicheck compat-reported-check FORCE
 
@@ -99,7 +99,7 @@ dylib: $(TARGET)
 $(APP_PAYLOAD):
 	@mkdir -p $(APP_PAYLOAD)
 
-TEST_PATHS := dylib/tests overlay-shim/tests app/Tests scripts/tests
+TEST_PATHS := dylib/tests overlay-shim/tests app/Tests scripts/tests ntdll-patch/tests
 
 tests-list:
 	@for p in $(TEST_PATHS); do echo $$p; done
@@ -482,6 +482,13 @@ panel-behavior:
 	echo "==> panel behavior: renders as expected, no stale arguments"
 
 CX_ROOT ?= /Applications/CrossOver Preview.app
+
+# Every shipped x86 detour payload hands the detour the register its ntdll keeps wm in,
+# and resolve.py refuses a wm the shims cannot read. No capstone needed; the two tests
+# that disassemble skip without it.
+detourcheck:
+	@if [ ! -f ntdll-patch/shimcheck.py ]; then $(call SKIP,detourcheck,ntdll-patch/shimcheck.py); exit 0; fi; \
+	python3 ntdll-patch/shimcheck.py && python3 -m unittest discover -s ntdll-patch/tests
 
 ntdll-resolve:
 	@if [ ! -f ntdll-patch/resolve.py ]; then \
@@ -917,7 +924,7 @@ CI_CHECKS := mincheck l10ncheck \
 	sigcheck callscheck np-test-batch-check webpatch-fixtures peicon-fixtures panel-behavior spawn-env \
 	activatecheck compat-reported-import-check compatcheck compatsvc-check prefixstate-check shortcutcheck launch-shell envcheck \
 	buildcheck settingscheck routecheck bridgecheck envpasscheck prefixnotecheck powernotecheck exitcheck anticheatcheck launchprogresscheck gamedrivecheck launchercheck \
-	seedcheck gamefixescheck versioncheck cicheck padcheck compat-reported-check np-inventory-check np-native-tests native-shim-tests \
+	seedcheck gamefixescheck versioncheck cicheck padcheck detourcheck compat-reported-check np-inventory-check np-native-tests native-shim-tests \
 	app-tests native-installercheck
 
 # app.yml runs the checks that need the built app in its build job and the rest in a

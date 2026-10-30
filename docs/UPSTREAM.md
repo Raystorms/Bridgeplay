@@ -79,6 +79,8 @@ To support another WineHQ build, run `ntdll-patch/resolve.py` against its Wine t
 payloads with `ntdll-patch/build.sh` / `build32.sh`, and add the hashes to `SupportedRunners`,
 `NtdllPatcher.byBuild` and `FreeEngine`.
 
+- Any new or bumped engine needs a 32-bit game smoke test: launch a 32-bit game from Steam on it and check that it reaches Steam. `make detourcheck` only proves each detour reads the register its pin names.
+
 Please read NOTICE for license information.
 
 Please open issue reports with any issues. PRs are welcome and encouraged.

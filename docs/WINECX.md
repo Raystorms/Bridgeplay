@@ -385,6 +385,8 @@ python3 resolve.py ../Libraries/Wine          # self-tests against PINNED
 python3 apply.py <ntdll.dll> <out> <detour bin>   # patched hashes
 ```
 
+- Any new or bumped engine needs a 32-bit game smoke test: launch a 32-bit game from Steam on it and check that it reaches Steam. `make detourcheck` only proves each detour reads the register its pin names.
+
 4.7.3 (`winecx-11.17`): both detours fit in `.text` padding. The detour payloads and
 every other shipped file are in [Shipped binaries](#shipped-binaries).
 
