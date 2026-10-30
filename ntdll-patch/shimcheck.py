@@ -211,22 +211,109 @@ def pinned(resolve_py):
     raise SystemExit(f"{resolve_py}: no PINNED table")
 
 
+def closing(text, i):
+    """Index of the bracket that closes text[i], skipping Swift strings and line comments."""
+    depth, k = 0, i
+    while k < len(text):
+        c = text[k]
+        if c == '"':
+            k += 1
+            while text[k] != '"':
+                k += 2 if text[k] == '\\' else 1
+        elif text.startswith('//', k):
+            k = text.index('\n', k)
+        elif c in '([':
+            depth += 1
+        elif c in ')]':
+            depth -= 1
+            if not depth:
+                return k
+        k += 1
+    raise SystemExit(f"unbalanced bracket at {i}")
+
+
+def hexint(v):
+    return int(v.replace('_', ''), 16)
+
+
 def swift_pins(sources):
-    """payloadResource -> (sha256, first hook RVA, caveRVA) for every NtdllPatch."""
-    out = {}
+    """What the app ships: (patches by payloadResource, clean ntdlls by build id and arch).
+
+    A patch belongs to the build whose NtdllPatcher.byBuild entry or WinecxRelease holds it,
+    and that build's RunnerBuild (rebuilds included) lists the clean ntdlls it patches.
+    """
+    patches, builds = {}, {}
     for f in sorted(pathlib.Path(sources).rglob('*.swift')):
         text = f.read_text()
-        starts = [m.start() for m in re.finditer(r'\bpayloadResource:', text)]
-        for a, b in zip(starts, starts[1:] + [len(text)]):
-            block = text[a:b]
-            res = re.search(r'payloadResource:\s*"([^"]+)"', block)
-            sha = re.search(r'payloadSHA256:\s*"([0-9a-f]{64})"', block)
-            cave = re.search(r'\bcaveRVA:\s*(0x[0-9a-fA-F_]+)', block)
-            hook = re.search(r'NtdllHook\(rva:\s*(0x[0-9a-fA-F_]+)', block)
-            if res and sha and cave and hook:
-                out[res.group(1)] = (sha.group(1), int(hook.group(1).replace('_', ''), 16),
-                                     int(cave.group(1).replace('_', ''), 16), f.name)
-    return out
+        owners = []
+        for m in re.finditer(r'\bRunnerBuild\(', text):
+            body = text[m.end():closing(text, m.end() - 1)]
+            ver = re.search(r'\bbundleVersion:\s*"([^"]+)"', body)
+            if not ver:
+                continue
+            flavor = re.search(r'\bflavor:\s*(?:nil|"([^"]+)")', body)
+            bid = ver.group(1) + (f"-{flavor.group(1)}" if flavor and flavor.group(1) else '')
+            clean = builds.setdefault(bid, {})
+            for c in re.finditer(r'\bcleanNtdll:\s*\[', body):
+                block = body[c.end():closing(body, c.end() - 1)]
+                for arch, h in re.findall(r'\.(\w+):\s*"([0-9a-f]{64})"', block):
+                    clean.setdefault(arch, set()).add(h)
+        table = re.search(r'\bstatic let byBuild\b[^=]*=\s*\[', text)
+        if table:
+            end = closing(text, table.end() - 1)
+            for k in re.finditer(r'"([^"]+)":\s*\[', text[table.end():end]):
+                a = table.end() + k.end() - 1
+                owners.append((a, closing(text, a), k.group(1)))
+        for m in re.finditer(r'\bWinecxRelease\(', text):
+            a = m.end() - 1
+            ver = re.search(r'\bRunnerBuild\(\s*bundleVersion:\s*"([^"]+)"', text[a:closing(text, a)])
+            if ver:
+                owners.append((a, closing(text, a), ver.group(1)))
+        for m in re.finditer(r'\bNtdllPatch\(', text):
+            body = text[m.end():closing(text, m.end() - 1)]
+            res = re.search(r'\bpayloadResource:\s*"([^"]+)"', body)
+            if not res:
+                continue
+            field = {k: re.search(pat, body) for k, pat in (
+                ('arch', r'\barch:\s*\.(\w+)'), ('sha', r'\bpayloadSHA256:\s*"([0-9a-f]{64})"'),
+                ('cave', r'\bcaveRVA:\s*(0x[0-9a-fA-F_]+)'), ('hook', r'NtdllHook\(rva:\s*(0x[0-9a-fA-F_]+)'))}
+            missing = [k for k, v in field.items() if not v]
+            if missing:
+                raise SystemExit(f"{f.name}: NtdllPatch for {res.group(1)} has no {', '.join(missing)}")
+            inside = [o for o in owners if o[0] < m.start() < o[1]]
+            patches.setdefault(res.group(1), []).append({
+                'arch': field['arch'].group(1), 'sha': field['sha'].group(1),
+                'cave': hexint(field['cave'].group(1)), 'hook': hexint(field['hook'].group(1)),
+                'build': min(inside, key=lambda o: o[1] - o[0])[2] if inside else None,
+                'file': f.name})
+    return patches, builds
+
+
+def shipped(name, sha, ntdll, pin, ships, builds, pins):
+    """None if every build that ships this payload patches the ntdll it was built for."""
+    if not ships:
+        return f"no NtdllPatch ships {name}"
+    for s in ships:
+        where = f"{s['file']} ({s['build'] or 'no build'})"
+        if s['sha'] != sha:
+            return f"{where} pins {name} as {s['sha'][:12]}, the file is {sha[:12]}"
+        if s['build'] is None:
+            return f"{s['file']}: cannot tell which build ships {name}"
+        clean = builds.get(s['build'], {}).get(s['arch'], set())
+        if ntdll not in clean:
+            return (f"{where} patches the {s['arch']} ntdll "
+                    f"{', '.join(sorted(h[:12] for h in clean)) or '(none pinned)'}, but this "
+                    f"payload was built for {ntdll[:12]}")
+        for h in sorted(clean):
+            other = pins.get(h, {}).get('payload')
+            if other and other != sha:
+                return (f"{where} also patches {h[:12]}, whose PINNED payload is "
+                        f"{other[:12]}, not this one")
+        if (s['hook'], s['cave']) != (pin['hookRVA'], pin['caveRVA']):
+            return (f"{where} hooks {s['hook']:#x} with the cave at {s['cave']:#x}, but the "
+                    f"ntdll this payload was built for ({ntdll[:12]}) hooks "
+                    f"{pin['hookRVA']:#x} with the cave at {pin['caveRVA']:#x}")
+    return None
 
 
 def main(argv):
@@ -238,7 +325,7 @@ def main(argv):
     root = pathlib.Path(a.root)
     pins = pinned(root / 'ntdll-patch/resolve.py')
     by_payload = {v['payload']: (k, v) for k, v in pins.items() if 'payload' in v}
-    swift = swift_pins(root / 'app/Sources')
+    patches, builds = swift_pins(root / 'app/Sources')
     files = [pathlib.Path(p) for p in a.payloads] or sorted(
         p for g in ('detour32*.bin', 'detour2*.bin') for p in (root / RESOURCES).glob(g))
     if not files:
@@ -248,30 +335,26 @@ def main(argv):
     for f in files:
         data = f.read_bytes()
         sha = hashlib.sha256(data).hexdigest()
-        problem = None
         if sha not in by_payload:
             problem = f"no PINNED ntdll in resolve.py carries payload {sha[:12]}"
         else:
             ntdll, pin = by_payload[sha]
-            ship = swift.get(f.stem)
             if 'wm' not in pin:
                 problem = f"PINNED {ntdll[:12]} is not an x86 build"
-            elif ship is None:
-                problem = f"no NtdllPatch in {root / 'app/Sources'} ships {f.stem}"
-            elif ship[0] != sha:
-                problem = f"{ship[3]} pins {f.stem} as {ship[0][:12]}, the file is {sha[:12]}"
-            elif (ship[1], ship[2]) != (pin['hookRVA'], pin['caveRVA']):
-                problem = (f"{ship[3]} hooks {ship[1]:#x} with the cave at {ship[2]:#x}, but the "
-                           f"ntdll this payload was built for ({ntdll[:12]}) hooks "
-                           f"{pin['hookRVA']:#x} with the cave at {pin['caveRVA']:#x}")
             else:
-                problem = check(data, pin)
+                problem = (shipped(f.stem, sha, ntdll, pin, patches.get(f.stem), builds, pins)
+                           or check(data, pin))
         if problem:
             bad += 1
             print(f"FAIL {f.name}: {problem}")
-        else:
-            print(f"ok   {f.name}: ntdll {ntdll[:12]} keeps wm in {pin['wm']}, and the shim hands "
-                  f"the detour {pin['wm']}")
+            continue
+        print(f"ok   {f.name}: ntdll {ntdll[:12]} keeps wm in {pin['wm']}, and the shim hands "
+              f"the detour {pin['wm']}")
+        for s in patches[f.stem]:
+            for h in sorted(builds[s['build']][s['arch']] - {ntdll}):
+                if h not in pins:
+                    print(f"     {s['build']} also patches {h[:12]}, which resolve.py does not "
+                          f"pin, so its wm is not checked")
     print(f"==> detourcheck: {len(files) - bad} of {len(files)} payloads read the pinned wm"
           + ("" if not bad else f", {bad} FAILED"))
     return 1 if bad else 0

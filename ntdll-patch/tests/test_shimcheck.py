@@ -129,7 +129,36 @@ class Pins(unittest.TestCase):
             swift.write_text(text.replace('NtdllHook(rva: 0x4f880,', 'NtdllHook(rva: 0x4f7c0,'))
             rc, out = quiet(['--root', str(d)])
             self.assertEqual(rc, 1, out)
-            self.assertIn('FAIL detour32-winecx-11.17.bin: FreeEngineWinecx.swift hooks 0x4f7c0', out)
+            self.assertIn('FAIL detour32-winecx-11.17.bin: FreeEngineWinecx.swift (winecx-11.17) hooks 0x4f7c0', out)
+
+    def test_bumped_engine_with_the_old_payload_fails(self):
+        # A new ntdll keeps the hook and cave RVAs, but the old payload and patch are kept
+        # for it: the payload still matches the old ntdll's pin, not the engine's.
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            shutil.copytree(ROOT / 'app/Sources', d / 'app/Sources')
+            (d / 'ntdll-patch').mkdir()
+            shutil.copy(ROOT / 'ntdll-patch/resolve.py', d / 'ntdll-patch/resolve.py')
+            swift = d / 'app/Sources/BridgeplayApp/Model/FreeEngineWinecx.swift'
+            old = 'cc8a9035cea0e26c5d333ef220f1becefc27ae44d2cdcdaea3278e8739d26fd9'
+            text = swift.read_text()
+            self.assertEqual(text.count(old), 1)
+            swift.write_text(text.replace(old, 'ab' * 32))
+            rc, out = quiet(['--root', str(d)])
+            self.assertEqual(rc, 1, out)
+            self.assertIn('FAIL detour32-winecx-11.17.bin: FreeEngineWinecx.swift (winecx-11.17) '
+                          'patches the i386Windows ntdll abababababab, but this payload was built '
+                          'for cc8a9035cea0', out)
+            self.assertIn('19 of 20', out)
+
+    def test_every_payload_has_its_build(self):
+        patches, builds = shimcheck.swift_pins(ROOT / 'app/Sources')
+        for f in RES.glob('detour*.bin'):
+            with self.subTest(f.name):
+                ships = patches.get(f.stem)
+                self.assertTrue(ships)
+                for s in ships:
+                    self.assertIn(s['arch'], builds[s['build']])
 
     def test_unpinned_payload_fails(self):
         with tempfile.TemporaryDirectory() as d:
