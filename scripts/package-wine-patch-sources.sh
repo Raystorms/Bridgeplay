@@ -1,0 +1,125 @@
+#!/bin/sh
+# Pack the Corresponding Source (LGPL-2.1-or-later) of the patched WineCX binaries listed
+# in NOTICE under "Patched Wine (WineCX) binaries": a full source tree of winecx at each
+# pinned commit, plus every patch directory in this repository and the recipe docs, into
+# out/wine-patch-sources-<id>.tar.gz. The id is derived from the pinned commits and the
+# patch files, so it only changes when one of those does.
+#
+#   scripts/package-wine-patch-sources.sh            pack, then print the pin for NOTICE
+#   scripts/package-wine-patch-sources.sh --publish  also create the GitHub release that hosts it
+#
+# Today the source for these binaries is winecx itself (a single-maintainer repository,
+# https://github.com/dappermint/winecx) plus the patches here. This closes the gap: Bridgeplay
+# keeps its own copy of winecx's source at the exact commits it patches, so the written offer
+# in NOTICE does not depend on that repository staying online. Run it again whenever
+# docs/WINECX.md's winecx pins change, then run with --publish and update NOTICE's pin.
+set -eu
+
+die() { echo "==> $*" >&2; exit 1; }
+
+repo=$(cd "$(dirname "$0")/.." && pwd)
+cd "$repo"
+publish=0
+case "${1:-}" in
+	--publish) publish=1 ;;
+	"") ;;
+	*) die "usage: $0 [--publish]" ;;
+esac
+
+# Keep this list in step with the "Patched Wine (WineCX) binaries" section of NOTICE.
+patch_dirs="win32u-patch winemac-patch winebus-patch winecoreaudio-patch wined3d-patch ws2_32-patch d3dx11-patch ngx-signer-patch hide-wine-exports-patch"
+for d in $patch_dirs; do
+	[ -d "$d" ] || die "missing $d; update patch_dirs in $0 to match NOTICE"
+done
+
+winecx_url=https://github.com/dappermint/winecx.git
+sha_1117=$(sed -n 's/^  WineCX 11\.17 (winecx \([0-9a-f]\{40\}\), runtime.*/\1/p' NOTICE)
+sha_1115=$(sed -n 's/^  WineCX 11\.15 (winecx \([0-9a-f]\{40\}\), runtime.*/\1/p' NOTICE)
+[ -n "$sha_1117" ] && [ -n "$sha_1115" ] || die "could not read the winecx pins from NOTICE"
+
+# The id names the source, not the archive: the two commits plus every patch file, so a
+# patch change or a re-pin gives a new id and nobody mistakes an old archive for current.
+id=$(
+	{
+		printf '%s\n%s\n' "$sha_1117" "$sha_1115"
+		for d in $patch_dirs; do
+			find "$d" -type f | LC_ALL=C sort | while read -r f; do shasum -a 256 "$f"; done
+		done
+	} | shasum -a 256 | cut -c1-12
+)
+name=wine-patch-sources-$id
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mirror="$repo/scratch/wine-patch-sources-build/winecx.git"
+mkdir -p "$(dirname "$mirror")"
+if [ ! -d "$mirror" ]; then
+	echo "==> cloning winecx (bare, shared by both pins)"
+	git clone --quiet --bare "$winecx_url" "$mirror"
+fi
+for sha in "$sha_1117" "$sha_1115"; do
+	git -C "$mirror" cat-file -e "$sha^{commit}" 2>/dev/null \
+		|| git -C "$mirror" fetch --quiet origin "$sha"
+	git -C "$mirror" cat-file -e "$sha^{commit}" 2>/dev/null || die "winecx $sha not found"
+done
+
+stage="$work/$name"
+mkdir -p "$stage/patches"
+for d in $patch_dirs; do
+	cp -R "$d" "$stage/patches/$d"
+done
+cp docs/WINECX.md NOTICE LICENSE.wine "$stage/"
+
+extract() {
+	short=$(git -C "$mirror" rev-parse --short=12 "$1")
+	dest="$stage/winecx-$2-$short"
+	mkdir -p "$dest"
+	git -C "$mirror" archive --format=tar "$1" | tar -x -C "$dest"
+}
+extract "$sha_1117" 11.17
+extract "$sha_1115" 11.15
+
+cat >"$stage/README.md" <<EOF
+# WineCX patch sources
+
+The LGPL-2.1-or-later Corresponding Source for the patched Wine (WineCX) binaries that
+NOTICE lists under "Patched Wine (WineCX) binaries" ($id):
+
+- \`winecx-11.17-$(git -C "$mirror" rev-parse --short=12 "$sha_1117")/\` and
+  \`winecx-11.15-$(git -C "$mirror" rev-parse --short=12 "$sha_1115")/\`: the unmodified
+  winecx source at the commit each binary is built from (dappermint/winecx,
+  $winecx_url).
+- \`patches/\`: this repository's patches and build recipes, one directory per binary,
+  copied as of this archive.
+- \`WINECX.md\`: how Bridgeplay lays the binaries over the engine and the per-binary build
+  recipes; \`NOTICE\`: the full list mapping each shipped file to its source commit and
+  patch; \`LICENSE.wine\`: Wine's license notice and the LGPL-2.1 text.
+
+Built by \`scripts/package-wine-patch-sources.sh\`.
+EOF
+
+find "$stage" -type d -exec chmod 755 {} + -o -type f -exec chmod 644 {} +
+find "$stage" -exec touch -h -t 202601010000 {} +
+(cd "$work" && find "$name" -type f | LC_ALL=C sort) >"$work/list"
+mkdir -p out
+archive=out/$name.tar.gz
+(cd "$work" && COPYFILE_DISABLE=1 tar --uid 0 --gid 0 --uname root --gname wheel --no-xattrs \
+	--no-mac-metadata -cf - -T "$work/list") | gzip -n -9 >"$archive"
+sha=$(shasum -a 256 "$archive" | cut -d' ' -f1)
+echo "==> $archive ($(du -h "$archive" | cut -f1 | tr -d ' ')), sha256 $sha"
+
+echo "==> pin for NOTICE (Patched Wine (WineCX) binaries):"
+echo "    archive: $name.tar.gz"
+echo "    sha256: $sha"
+echo "    release tag: $name"
+
+[ "$publish" -eq 1 ] || exit 0
+slug=raymondchins/Bridgeplay
+if gh release view "$name" -R "$slug" >/dev/null 2>&1; then
+	echo "==> $name is already published"
+	exit 0
+fi
+gh release create "$name" "$archive" -R "$slug" --prerelease --latest=false \
+	--title "WineCX patch sources ($id)" \
+	--notes "The LGPL-2.1-or-later Corresponding Source for the patched Wine (WineCX) binaries in NOTICE: winecx at the pinned commits plus this repository's patches and build recipes. Built by scripts/package-wine-patch-sources.sh."
+echo "==> published https://github.com/$slug/releases/tag/$name"

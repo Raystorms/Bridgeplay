@@ -410,6 +410,16 @@ The unpack test (`FreeEngineWinecxTests.unpacksRealArchive`, once per release) c
 this against the real archive when `NOTPROTON_WINECX_ARCHIVE` points at it, or when it sits in
 Bridgeplay's download cache.
 
+## Corresponding Source
+
+Every patched binary below (LGPL-2.1-or-later) is built from winecx at the commit pinned at
+the top of this page plus one of the patches above. winecx is a third-party repository
+(`dappermint/winecx`); so NOTICE's written offer does not depend only on it staying online,
+`scripts/package-wine-patch-sources.sh` archives winecx's source at those commits with the
+patches and recipes onto a `wine-patch-sources-<id>` release of this project, pinned in
+NOTICE. See [RELEASING.md](RELEASING.md), WineCX patch source, for when to rebuild and
+republish it.
+
 ## Shipped binaries
 
 Every binary in `app/Sources/BridgeplayApp/Resources/` built from a patch or source in this
