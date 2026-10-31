@@ -1020,6 +1020,38 @@
         }
       }
     },
+    "A game or Wine tool is running on build %@. Quit it before removing Bridgeplay." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un gioco o uno strumento di Wine è in esecuzione sulla build %@. Chiudilo prima di rimuovere Bridgeplay."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有游戏或 Wine 工具正在使用构建版本 %@。请先退出，再移除 Bridgeplay。"
+          }
+        }
+      }
+    },
+    "A game or Wine tool is running on build %@. Quit it before repairing Steam." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un gioco o uno strumento di Wine è in esecuzione sulla build %@. Chiudilo prima di riparare Steam."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有游戏或 Wine 工具正在使用构建版本 %@。请先退出，再修复 Steam。"
+          }
+        }
+      }
+    },
     "A game or Wine tool is running on build %@. Quit it before updating Bridgeplay." : {
       "localizations" : {
         "it" : {
@@ -1464,6 +1496,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bridgeplay 更新后，开关可能显示为开启，但实际已失效。请将其关闭再重新开启，或用 − 将 Bridgeplay 从列表中移除，再用 + 重新添加。"
+          }
+        }
+      }
+    },
+    "All %lld backups will also be permanently deleted." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verranno eliminati definitivamente anche tutti i %lld backup."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部 %lld 个备份也将被永久删除。"
           }
         }
       }
@@ -5822,6 +5870,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "它会将 CrossOver 使用的 DLL 替换为与当前兼容工具匹配的版本。"
+          }
+        }
+      }
+    },
+    "Its 1 backup will also be permanently deleted." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verrà eliminato definitivamente anche il suo backup."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其 1 个备份也将被永久删除。"
           }
         }
       }
@@ -11729,6 +11793,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wine 日志"
+          }
+        }
+      }
+    },
+    "Wine could not build a complete new prefix. The prefix has been left as it was and nothing has been lost. Try again, or use Set Up Compatibility Tool first." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wine non è riuscito a creare un nuovo prefisso completo. Il prefisso è rimasto com'era e non è andato perso nulla. Riprova, oppure usa prima Set Up Compatibility Tool."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wine 无法构建完整的新前缀。原前缀保持不变，没有任何数据丢失。请重试，或先使用 Set Up Compatibility Tool。"
+          }
+        }
+      }
+    },
+    "Wine did not finish building the new prefix. The prefix has been left as it was and nothing has been lost." : {
+      "localizations" : {
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wine non ha finito di creare il nuovo prefisso. Il prefisso è rimasto com'era e non è andato perso nulla."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wine 未能完成新前缀的构建。原前缀保持不变，没有任何数据丢失。"
           }
         }
       }

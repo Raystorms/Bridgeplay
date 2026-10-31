@@ -631,13 +631,16 @@ final class SystemStatus {
             AppLog.note("run refused: install waits for the 3.0 folder move")
             return
         }
-        var failedInputResets: [String]?
         await perform(from: InstallPhase.checkingPayload.label) { progress in
             let lock = try DeploymentContent.acquireInstallationLock()
             defer { lock.release() }
             let stopClient = unattended ? SteamInstaller.leaveTheClient : SteamInstaller.stopTheClient
             let result = try await Task.detached(priority: .userInitiated) {
+                // Only an install that changed Steam's signature tried a reset, so only it decides.
                 try SteamInstaller.run(holdingInstallationLock: true, stopClient: stopClient,
+                                       onInputReset: { failed in
+                                           Task { @MainActor in self.controllerResetFailures = failed }
+                                       },
                                        report: { progress($0.label) })
             }.value
 
@@ -675,16 +678,11 @@ final class SystemStatus {
             try await Task.detached(priority: .userInitiated) {
                 try SteamInstaller.finish(result)
             }.value
-            failedInputResets = result.failedInputResets
 
             return parts.joined(separator: " ")
         }
         if failure == nil {
             UserDefaults.standard.removeObject(forKey: SteamPatchKeeper.pausedKey)
-        }
-        // Only an install that changed Steam's signature tried a reset, so only it decides.
-        if let failedInputResets, failure == nil, !failedInputResets.isEmpty || !controllerResetFailures.isEmpty {
-            controllerResetFailures = failedInputResets
         }
     }
 

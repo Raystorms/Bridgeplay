@@ -138,7 +138,6 @@ enum GameDefaults {
 
     struct Problem: Equatable, Sendable {
         var setting: Setting
-        var value: String
         var reason: String
     }
 
@@ -185,7 +184,7 @@ enum GameDefaults {
                   let setting = Setting.allCases.first(where: { $0.keys.contains(key) }),
                   let reason = refusal(value, for: setting)
             else { continue }
-            found.append(Problem(setting: setting, value: value, reason: reason))
+            found.append(Problem(setting: setting, reason: reason))
         }
         return found
     }
