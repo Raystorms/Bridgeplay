@@ -44,11 +44,6 @@ extension PrefixTools {
     // A wineboot whose wineserver died never exits. Slow runs on a loaded Mac take under a minute.
     private static let wineTimeLimit: DispatchTimeInterval = .seconds(300)
 
-    // A healthy system.reg is 3.4 MB. A wineboot whose installer was killed exits 0 at 2 MB,
-    // and the next launch does not repair it.
-    // CEILING: a size floor, so an engine with a much smaller registry is refused — a list of late keys would not be.
-    private static let smallestSystemRegistry = 3_000_000
-
     private static func rebuild(
         _ prefix: WinePrefix, runner: URL, flavor: CompatTool.Flavor,
         now: Date, keepBackup: Bool, record: InstalledTool? = nil,
@@ -113,7 +108,7 @@ extension PrefixTools {
                 detail: String(localized: "Wine did not finish building the new prefix. The prefix has been left as it was and nothing has been lost.")
             )
         }
-        guard builtWhole(fresh) else {
+        guard builtWhole(fresh, runner: runner) else {
             AppLog.note("rebuild \(prefix.appID) refused, wineboot left an incomplete prefix")
             throw StepFailure(
                 step: String(localized: "Recreate prefix"),
@@ -211,13 +206,32 @@ extension PrefixTools {
         return slot
     }
 
-    private static func builtWhole(_ fresh: URL) -> Bool {
+    // A wineboot whose wine.inf installer was killed still exits 0, with a registry the next
+    // launch does not repair. Each install writes its keys after the slow DLL registration:
+    // the services come last in the 64-bit one, AeDebug last in the 32-bit one, which only
+    // runs on an engine with 32-bit Windows DLLs.
+    static func builtWhole(_ fresh: URL, runner: URL) -> Bool {
         func size(_ name: String) -> Int {
             let values = try? fresh.appending(path: name).resourceValues(forKeys: [.fileSizeKey])
             return values?.fileSize ?? 0
         }
-        return size("system.reg") >= smallestSystemRegistry
-            && size("user.reg") > 0 && size("userdef.reg") > 0
+        guard size("user.reg") > 0, size("userdef.reg") > 0,
+            let system = try? Data(contentsOf: fresh.appending(path: "system.reg"))
+        else { return false }
+        var keys = Set<String>()
+        for line in String(decoding: system, as: UTF8.self).lowercased().split(separator: "\n")
+        where line.hasPrefix("[") {
+            if let end = line.firstIndex(of: "]") { keys.insert(String(line[...end])) }
+        }
+        let services = ["controlset001", "currentcontrolset"].contains {
+            keys.contains(#"[system\\\#($0)\\services\\nsiproxy]"#)
+        }
+        let wow64 = runner.appending(path: "lib/wine/i386-windows")
+        guard FileManager.default.fileExists(atPath: wow64.path(percentEncoded: false)) else {
+            return services
+        }
+        return services
+            && keys.contains(#"[software\\wow6432node\\microsoft\\windows nt\\currentversion\\aedebug]"#)
     }
 
     private static func layOutProfile(in fresh: URL) {
@@ -390,6 +404,14 @@ private final class Carry {
 
     private func park(_ source: URL, beside landing: URL) {
         let parent = landing.deletingLastPathComponent()
+        // Each engine switch would park the other engine's copy again. Kept as carried, so a
+        // later file of the same name is parked rather than put over it.
+        if let same = family(of: landing).first(where: {
+            fm.contentsEqual(atPath: source.path(percentEncoded: false), andPath: $0.path(percentEncoded: false))
+        }) {
+            carried.insert(identity(of: same))
+            return
+        }
         var name = landing.lastPathComponent + " BACKUP"
         var next = 2
         while fm.fileExists(atPath: parent.appending(path: name).path(percentEncoded: false)) {
@@ -399,6 +421,18 @@ private final class Carry {
         let parked = parent.appending(path: name)
         attempt(source) { try fm.copyItem(at: source, to: parked) }
         carried.insert(identity(of: parked))
+    }
+
+    // The name and its parked copies, "Name BACKUP", "Name BACKUP 2" and "Name BACKUP BACKUP".
+    private func family(of landing: URL) -> [URL] {
+        let parent = landing.deletingLastPathComponent()
+        let suffix = #/( BACKUP( \d+)?)+$/#
+        let root = landing.lastPathComponent.replacing(suffix, with: "")
+        let names = (try? fm.contentsOfDirectory(atPath: parent.path(percentEncoded: false))) ?? []
+        return names.filter { name in
+            name == root
+                || (name.hasPrefix(root) && name.dropFirst(root.count).wholeMatch(of: suffix) != nil)
+        }.map { parent.appending(path: $0) }
     }
 
     // realpath gives the name on disk, so the volume's own folding decides which names are one

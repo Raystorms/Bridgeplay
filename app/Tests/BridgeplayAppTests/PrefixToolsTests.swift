@@ -598,7 +598,9 @@ struct PrefixToolsTests {
             printf template > "$WINEPREFIX/drive_c/users/crossover/AppData/wine.ini"
             printf template > "$WINEPREFIX/drive_c/users/crossover/AppData/fresh.ini"
             printf 'fresh user' > "$WINEPREFIX/user.reg"
-            { printf 'fresh system'; head -c 3000000 /dev/zero; } > "$WINEPREFIX/system.reg"
+            cat > "$WINEPREFIX/system.reg" <<'REG'
+            \(Self.wholeSystemRegistry)
+            REG
             printf 'fresh userdef' > "$WINEPREFIX/userdef.reg"
             ln -s "\(home.path(percentEncoded: false))" "$WINEPREFIX/drive_c/users/crossover/Documents"
             \(extra)
@@ -906,10 +908,79 @@ struct PrefixToolsTests {
         #expect(text("same.ini BACKUP") == nil)
     }
 
-    // A killed installer leaves wineboot exiting 0 with a registry too small to be a prefix.
+    @Test("Switching engines back and forth does not park the same file again")
+    func rebuildsDoNotPileUpBackups() throws {
+        let fm = FileManager.default
+        let dir = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString)
+        defer { try? fm.removeItem(at: dir) }
+        let home = dir.appending(path: "home")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        let engines = try ["a", "b"].map { engine in
+            try fakeRunner(in: dir.appending(path: engine), home: home, extra: """
+                mkdir -p "$WINEPREFIX/drive_c/Program Files/game"
+                printf \(engine) > "$WINEPREFIX/drive_c/Program Files/game/x.dll"
+                """)
+        }
+        let prefix = try usedPrefix(in: dir, home: home)
+        let game = prefix.pfx.appending(path: "drive_c/Program Files/game")
+        try fm.createDirectory(at: game, withIntermediateDirectories: true)
+        try Data("mine".utf8).write(to: game.appending(path: "x.dll"))
+
+        for round in 0..<5 {
+            try PrefixTools.recreate(prefix, runner: engines[round % 2], keepBackup: false)
+        }
+
+        var kept: [String: String] = [:]
+        for name in try fm.contentsOfDirectory(atPath: game.path(percentEncoded: false)) {
+            kept[name] = try String(contentsOf: game.appending(path: name), encoding: .utf8)
+        }
+        #expect(kept == ["x.dll": "a", "x.dll BACKUP": "b", "x.dll BACKUP BACKUP": "mine"])
+    }
+
+    @Test("A prefix is whole by the keys wineboot writes last, not by its size")
+    func wholePrefixIsJudgedByItsLastKeys() throws {
+        let fm = FileManager.default
+        let dir = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString)
+        defer { try? fm.removeItem(at: dir) }
+        let fresh = dir.appending(path: "pfx")
+        let runner = dir.appending(path: "runner")
+        try fm.createDirectory(at: fresh, withIntermediateDirectories: true)
+        try Data("user".utf8).write(to: fresh.appending(path: "user.reg"))
+        try Data("userdef".utf8).write(to: fresh.appending(path: "userdef.reg"))
+        func whole(_ registry: String) throws -> Bool {
+            try Data(registry.utf8).write(to: fresh.appending(path: "system.reg"))
+            return PrefixTools.builtWhole(fresh, runner: runner)
+        }
+        let lines = Self.wholeSystemRegistry.split(separator: "\n").map(String.init)
+        let services = lines[1]
+        let aeDebug = lines[2]
+
+        #expect(try whole(Self.wholeSystemRegistry))
+        #expect(try whole(services))
+        #expect(try whole(services.replacing("ControlSet001", with: "CurrentControlSet").uppercased()))
+        #expect(try !whole(aeDebug))
+        #expect(try !whole(String(repeating: "[Software\\\\Classes\\\\x] 1\n", count: 200_000)))
+
+        try fm.createDirectory(at: runner.appending(path: "lib/wine/i386-windows"), withIntermediateDirectories: true)
+        #expect(try whole(Self.wholeSystemRegistry))
+        #expect(try !whole(services))
+    }
+
+    // The last keys the 64-bit and the 32-bit wine.inf installs write, far short of the 3.4 MB
+    // a WineCX prefix has.
+    static let wholeSystemRegistry = #"""
+        fresh system
+        [System\\ControlSet001\\Services\\nsiproxy] 1792492724
+        [Software\\Wow6432Node\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug] 1792492786
+        """#
+
+    // A killed installer leaves wineboot exiting 0 with a registry missing what it writes last.
     @Test("A wineboot that exits 0 with a partial registry leaves the prefix alone", arguments: [
         #"printf small > "$WINEPREFIX/system.reg""#,
         #"rm -f "$WINEPREFIX/userdef.reg""#,
+        #"sed -i '' /nsiproxy/d "$WINEPREFIX/system.reg""#,
+        // The 32-bit install killed on an engine that has one.
+        #"mkdir -p "${0%/*}/../i386-windows"; sed -i '' /AeDebug/d "$WINEPREFIX/system.reg""#,
     ])
     func rebuildRefusesAPartialPrefix(extra: String) throws {
         let fm = FileManager.default

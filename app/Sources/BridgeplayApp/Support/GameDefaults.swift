@@ -113,7 +113,7 @@ enum GameDefaults {
 
         var requirement: Requirement? {
             switch self {
-            case .nvapi, .metalFX: .d3dmetal
+            case .nvapi, .dlssFrameGen, .metalFX: .d3dmetal
             default: nil
             }
         }

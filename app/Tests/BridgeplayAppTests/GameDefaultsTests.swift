@@ -63,6 +63,12 @@ import Testing
         #expect(GameDefaults.value(.frameGen, in: "BRIDGEPLAY_FRAMEGEN=1\n") == "2")
     }
 
+    // The run script applies these only on D3DMetal, so their rows carry its caption.
+    @Test func d3dMetalSettingsNameTheirRequirement() {
+        let needing = GameDefaults.Setting.allCases.filter { $0.requirement == .d3dmetal }
+        #expect(Set(needing) == [.nvapi, .dlssFrameGen, .metalFX])
+    }
+
     @Test func layersResolveAsTheRunScriptReadsThem() {
         let shipped = "NVAPI=1\nBACKEND=dxmt\n"
         let user = "BACKEND=dxvk\n"

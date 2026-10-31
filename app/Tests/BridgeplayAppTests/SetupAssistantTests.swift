@@ -374,8 +374,18 @@ struct SetupChecksTests {
         let dir = try scratchDirectory("setup-steam-stale")
         defer { try? fm.removeItem(at: dir) }
         let (image, applications) = try steamImage(in: dir)
-        let stale = ".Steam.app-\(UUID().uuidString)"
-        try fm.createDirectory(at: applications.appending(path: "\(stale)/Contents"), withIntermediateDirectories: true)
+        func stage(_ name: String) throws {
+            try fm.createDirectory(at: applications.appending(path: "\(name)/Contents"), withIntermediateDirectories: true)
+        }
+        // A lock file nobody holds, a lock file alone, and a lock-less copy from an older build.
+        let unlocked = ".Steam.app-\(UUID().uuidString)"
+        try stage(unlocked)
+        try Data().write(to: applications.appending(path: "\(unlocked).lock"))
+        try Data().write(to: applications.appending(path: ".Steam.app-\(UUID().uuidString).lock"))
+        let old = ".Steam.app-\(UUID().uuidString)"
+        try stage(old)
+        try fm.setAttributes([.creationDate: Date.now.addingTimeInterval(-7200)],
+                             ofItemAtPath: applications.appending(path: old).path(percentEncoded: false))
         let kept = [".Steam.app-notes", ".Steam.app-\(UUID().uuidString)x", "Steam.app-\(UUID().uuidString)"]
         for name in kept { try Data().write(to: applications.appending(path: name)) }
 
@@ -383,6 +393,29 @@ struct SetupChecksTests {
 
         #expect(try fm.contentsOfDirectory(atPath: applications.path(percentEncoded: false)).sorted()
             == (kept + ["Steam.app"]).sorted())
+    }
+
+    // Another process's lock, or an older build's copy that may still be under way.
+    @Test("A copy another process holds, or a recent lock-less one, is kept")
+    func liveStagedCopiesAreKept() throws {
+        let fm = FileManager.default
+        let dir = try scratchDirectory("setup-steam-live")
+        defer { try? fm.removeItem(at: dir) }
+        let (image, applications) = try steamImage(in: dir)
+        let held = ".Steam.app-\(UUID().uuidString)"
+        let recent = ".Steam.app-\(UUID().uuidString)"
+        for name in [held, recent] {
+            try fm.createDirectory(at: applications.appending(path: "\(name)/Contents"), withIntermediateDirectories: true)
+        }
+        let lock = open(applications.appending(path: "\(held).lock").path(percentEncoded: false),
+                        O_RDONLY | O_CREAT | O_EXLOCK, 0o644)
+        #expect(lock >= 0)
+        defer { close(lock) }
+
+        try SetupChecks.copySteam(from: image, to: applications.appending(path: "Steam.app"), verify: { _ in })
+
+        #expect(try fm.contentsOfDirectory(atPath: applications.path(percentEncoded: false)).sorted()
+            == [held, "\(held).lock", recent, "Steam.app"].sorted())
     }
 
     @Test("A staged copy still being written is not swept by another install")
