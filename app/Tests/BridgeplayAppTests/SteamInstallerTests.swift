@@ -112,6 +112,7 @@ struct SteamInstallerTests {
         recordBuild: Bool = true,
         refusedResets: [String] = [],
         runnerIsRunning: (@Sendable (URL) -> Bool)? = nil,
+        launchingBuild: (URL) -> String? = { _ in nil },
         stopClient: SteamInstaller.ClientStopper? = nil,
         verifyRunner: (RunnerBuild, URL) throws -> Void = { _, _ in },
         register: SteamInstaller.BundleRegistrar? = nil,
@@ -133,6 +134,7 @@ struct SteamInstallerTests {
             lockFolder: fixture.work,
             modifications: fixture.modifications,
             runnerIsRunning: runnerIsRunning ?? { _ in running },
+            launchingBuild: launchingBuild,
             verifyRunner: verifyRunner,
             patchRunner: { _, _, _ in },
             stopClient: stopClient ?? { _, onStopping in
@@ -784,6 +786,21 @@ struct SteamInstallerTests {
         #expect(error.detail.contains("is running"))
         #expect(calls.stops == 1)
         #expect(!FileManager.default.fileExists(atPath: fixture.bridge.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.deployedDylib.path))
+    }
+
+    @Test("A game still launching, before Wine shows up, blocks installation before Steam is asked to quit")
+    func refusesLaunchingGame() async throws {
+        let work = try scratchDirectory("install-launching")
+        defer { try? FileManager.default.removeItem(at: work) }
+        let fixture = try await self.fixture(into: work)
+        let calls = Calls()
+        let tools = fixture.work.appending(path: "compatibilitytools.d")
+        let error = try #require(throws: StepFailure.self) {
+            try install(fixture, calls: calls, launchingBuild: { $0 == tools ? "winecx-11.17" : nil })
+        }
+        #expect(error.detail.contains("winecx-11.17"))
+        #expect(calls.stops == 0, "Steam was asked to quit under a starting game")
         #expect(!FileManager.default.fileExists(atPath: fixture.deployedDylib.path))
     }
 

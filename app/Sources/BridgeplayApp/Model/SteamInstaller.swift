@@ -95,6 +95,7 @@ enum SteamInstaller {
         lockFolder: URL = SupportPaths.applicationSupport,
         modifications: SteamModifications = .shared,
         runnerIsRunning: @Sendable (URL) -> Bool = { RunnerInstaller.isRunning(from: $0) },
+        launchingBuild: (URL) -> String? = { RunnerInstaller.launchingBuild(tools: SupportPaths.Steam.ourTools(in: $0)) },
         verifyRunner: (RunnerBuild, URL) throws -> Void = RunnerInstaller.verifyClone,
         patchRunner: (RunnerBuild, URL, URL) throws -> Void = { build, root, bridge in
             _ = try NtdllPatcher.stage(build: build, runnerRoot: root, bridge: bridge)
@@ -140,6 +141,9 @@ enum SteamInstaller {
         }
         func refuseRunningRunners() throws {
             for id in RunnerStore.clonedBuilds(in: runners) where runnerIsRunning(SupportPaths.runnerRoot(forBuild: id, runners: runners)) {
+                throw StepFailure(step: step, detail: String(localized: "A game or Wine tool is running on build \(id). Quit it before updating Bridgeplay."))
+            }
+            if let id = launchingBuild(compatTools) {
                 throw StepFailure(step: step, detail: String(localized: "A game or Wine tool is running on build \(id). Quit it before updating Bridgeplay."))
             }
         }
