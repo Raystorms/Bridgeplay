@@ -59,9 +59,7 @@ enum PostUpdateRefresh {
         // pgrep and ps can take seconds, so neither runs on the main actor.
         let (steamRunning, workloadRunning) = await Task.detached(priority: .utility) {
             (SteamBundle.isRunning,
-             RunnerStore.clonedBuilds().contains {
-                 RunnerInstaller.isRunning(from: SupportPaths.runnerRoot(forBuild: $0))
-             })
+             RunnerInstaller.runningBuild() != nil)
         }.value
         let decision = decide(
             steam: snapshot.steam,

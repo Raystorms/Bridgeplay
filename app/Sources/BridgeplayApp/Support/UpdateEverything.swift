@@ -43,9 +43,7 @@ extension SystemStatus {
 
         // pgrep and ps can take seconds, so neither runs on the main actor.
         let busy = await Task.detached(priority: .utility) {
-            SteamBundle.isRunning || RunnerStore.clonedBuilds().contains {
-                RunnerInstaller.isRunning(from: SupportPaths.runnerRoot(forBuild: $0))
-            }
+            SteamBundle.isRunning || RunnerInstaller.runningBuild() != nil
         }.value
         if snapshot.steamRunning || busy {
             AppLog.note("update: \(plan) waiting for Steam and games to close")

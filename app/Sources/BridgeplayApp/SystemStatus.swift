@@ -602,9 +602,7 @@ final class SystemStatus {
     private func requireInstallableContent() async throws {
         try await requireUnblockedContent()
         let running = await Task.detached(priority: .utility) {
-            RunnerStore.clonedBuilds().contains {
-                RunnerInstaller.isRunning(from: SupportPaths.runnerRoot(forBuild: $0))
-            }
+            RunnerInstaller.runningBuild() != nil
         }.value
         guard !running else {
             throw StepFailure(step: SteamInstaller.step, detail: String(localized: "A game or Wine tool is running. Quit it before updating Bridgeplay."))
