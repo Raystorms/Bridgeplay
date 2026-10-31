@@ -288,12 +288,18 @@ enum RunnerInstaller {
             let scripts = Set([root, realpath(root, nil).map { defer { free($0) }; return String(cString: $0) }]
                 .compactMap { $0 }
                 .map { ($0.hasSuffix("/") ? $0 : $0 + "/") + "run" })
+            // Only the script being run counts: as the command itself or as a shell's first
+            // argument, not a path some other process (tail, an editor) was given.
+            func runs(_ command: Substring) -> Bool {
+                scripts.contains { command == $0 || command.hasPrefix($0 + " ") }
+            }
             let launching = lines.contains { line in
-                scripts.contains { script in
-                    guard let range = line.range(of: script) else { return false }
-                    return (range.lowerBound == line.startIndex || line[line.index(before: range.lowerBound)] == " ")
-                        && (range.upperBound == line.endIndex || line[range.upperBound] == " ")
-                }
+                let line = Substring(line)
+                if runs(line) { return true }
+                guard let space = line.firstIndex(of: " "),
+                      ["sh", "bash", "dash", "zsh"].contains(line[..<space].split(separator: "/").last ?? "")
+                else { return false }
+                return runs(line[line.index(after: space)...])
             }
             if launching {
                 let build = (try? String(contentsOf: tool.appending(path: "build"), encoding: .utf8))?

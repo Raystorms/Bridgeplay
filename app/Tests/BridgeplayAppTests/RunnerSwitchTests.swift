@@ -778,8 +778,11 @@ struct RunnerRemovalTests {
         // A tool without a build file is named by its folder.
         let old = try ps(["/bin/sh \(legacy.appending(path: "run").path(percentEncoded: false))"])
         #expect(RunnerInstaller.launchingBuild(tools: [current, legacy], ps: old) == "notproton-winecx-11.1")
-        // Nothing running, a longer name, a file next to run, and ps failing all read as no launch.
-        let idle = try ps(["/sbin/launchd", "/bin/sh \(script)x", "/bin/cat \(script).log", "/bin/sh /x\(script)"])
+        #expect(RunnerInstaller.launchingBuild(tools: [current], ps: try ps(["\(script) waitforexitandrun /G/Game.exe"])) == "winecx-11.17")
+        // Nothing running, a longer name, a file next to run, a process only naming the script,
+        // and ps failing all read as no launch.
+        let idle = try ps(["/sbin/launchd", "/bin/sh \(script)x", "/bin/cat \(script).log", "/bin/sh /x\(script)",
+                           "/usr/bin/tail -f \(script)", "/usr/bin/vim \(script)", "/bin/sh -c cat \(script)"])
         #expect(RunnerInstaller.launchingBuild(tools: [current, legacy], ps: idle) == nil)
         #expect(RunnerInstaller.launchingBuild(tools: [current], ps: "/nonexistent/ps") == nil)
 
