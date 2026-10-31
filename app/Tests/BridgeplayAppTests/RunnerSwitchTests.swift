@@ -768,6 +768,9 @@ struct RunnerRemovalTests {
         }
         let script = current.appending(path: "run").path(percentEncoded: false)
         let launching = try ps(["/sbin/launchd", "/bin/sh \(script) waitforexitandrun /G/Game.exe"])
+        // What Steam runs.
+        let dotted = try ps(["/bin/sh \(current.path(percentEncoded: false))/./run waitforexitandrun /G/Game.exe"])
+        #expect(RunnerInstaller.launchingBuild(tools: [current], ps: dotted) == "winecx-11.17")
 
         #expect(RunnerInstaller.launchingBuild(tools: [current, legacy], ps: launching) == "winecx-11.17")
         #expect(RunnerInstaller.launchingBuild(tools: [legacy], ps: launching) == nil)

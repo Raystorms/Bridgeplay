@@ -277,7 +277,12 @@ enum RunnerInstaller {
         guard !tools.isEmpty,
               let result = try? Shell.run(ps, ["-axww", "-o", "args="]), result.succeeded
         else { return nil }
-        let lines = result.stdout.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        // Steam starts the script as <tool>/./run.
+        let lines = result.stdout.split(separator: "\n").map { line in
+            var line = line.trimmingCharacters(in: .whitespaces)
+            while line.contains("/./") { line = line.replacingOccurrences(of: "/./", with: "/") }
+            return line
+        }
         for tool in tools {
             let root = tool.standardizedFileURL.path(percentEncoded: false)
             let scripts = Set([root, realpath(root, nil).map { defer { free($0) }; return String(cString: $0) }]
