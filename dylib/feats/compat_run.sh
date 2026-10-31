@@ -2390,18 +2390,26 @@ map_game_drive() {
   drive="$WINEPREFIX/dosdevices/s:"
   [ -d "$WINEPREFIX/dosdevices" ] && [ ! -L "$WINEPREFIX/dosdevices" ] || return 0
   library=""
+  listed=""
   set -f
   old_ifs=$IFS
   IFS=:
   for path in $STEAM_COMPAT_LIBRARY_PATHS; do
     path=${path%/}
     [ -n "$path" ] || continue
+    listed=1
     case "$STEAM_COMPAT_INSTALL_PATH/" in
       "$path"/*) if [ "${#path}" -gt "${#library}" ]; then library=$path; fi ;;
     esac
   done
   IFS=$old_ifs
   set +f
+  # Steam sometimes passes no libraries on a quick relaunch. That says nothing about where
+  # the game is, so S: stays as it is.
+  if [ -z "$listed" ]; then
+    echo "=== Steam passed no library paths, drive S: left as it is ===" >> "$log" 2>&1 || true
+    return 0
+  fi
   if [ -z "$library" ]; then
     unmap_game_drive
     return 0

@@ -261,9 +261,42 @@ enum RunnerInstaller {
 
     static func runningBuild(
         in runners: URL = SupportPaths.runners,
-        running: (URL) -> Bool = { RunnerInstaller.isRunning(from: $0) }
+        running: (URL) -> Bool = { RunnerInstaller.isRunning(from: $0) },
+        launching: () -> String? = { RunnerInstaller.launchingBuild() }
     ) -> String? {
         RunnerStore.clonedBuilds(in: runners).first { running(SupportPaths.runnerRoot(forBuild: $0, runners: runners)) }
+            ?? launching()
+    }
+
+    // Steam keeps a tool's run script going from Play until the game exits. Early in a launch
+    // Wine renames its processes and only the script shows a game is starting. ps prints the
+    // arguments of this user's processes only.
+    static func launchingBuild(
+        tools: [URL] = SupportPaths.Steam.ourTools(), ps: String = "/bin/ps"
+    ) -> String? {
+        guard !tools.isEmpty,
+              let result = try? Shell.run(ps, ["-axww", "-o", "args="]), result.succeeded
+        else { return nil }
+        let lines = result.stdout.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        for tool in tools {
+            let root = tool.standardizedFileURL.path(percentEncoded: false)
+            let scripts = Set([root, realpath(root, nil).map { defer { free($0) }; return String(cString: $0) }]
+                .compactMap { $0 }
+                .map { ($0.hasSuffix("/") ? $0 : $0 + "/") + "run" })
+            let launching = lines.contains { line in
+                scripts.contains { script in
+                    guard let range = line.range(of: script) else { return false }
+                    return (range.lowerBound == line.startIndex || line[line.index(before: range.lowerBound)] == " ")
+                        && (range.upperBound == line.endIndex || line[range.upperBound] == " ")
+                }
+            }
+            if launching {
+                let build = (try? String(contentsOf: tool.appending(path: "build"), encoding: .utf8))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return build.flatMap { $0.isEmpty ? nil : $0 } ?? tool.lastPathComponent
+            }
+        }
+        return nil
     }
 
     static func hasClone(forBuild build: String, runners: URL = SupportPaths.runners) -> Bool {

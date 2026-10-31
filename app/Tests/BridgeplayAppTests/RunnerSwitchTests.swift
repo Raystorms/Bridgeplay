@@ -745,8 +745,46 @@ struct RunnerRemovalTests {
         let path = ps.path(percentEncoded: false)
 
         #expect(RunnerInstaller.isRunning(from: link, ps: path))
-        #expect(RunnerInstaller.runningBuild(in: runners) { RunnerInstaller.isRunning(from: $0, ps: path) } == "27")
-        #expect(RunnerInstaller.runningBuild(in: runners) { _ in false } == nil)
+        #expect(RunnerInstaller.runningBuild(in: runners, running: { RunnerInstaller.isRunning(from: $0, ps: path) }, launching: { nil }) == "27")
+        #expect(RunnerInstaller.runningBuild(in: runners, running: { _ in false }, launching: { nil }) == nil)
+    }
+
+    @Test("A launch reads as running from its run script, before any Wine process shows up")
+    func readsALaunchFromItsRunScript() throws {
+        let fm = FileManager.default
+        let dir = URL(filePath: try scratchDirectory("runner-launching").path(percentEncoded: false)).resolvingSymlinksInPath()
+        defer { try? fm.removeItem(at: dir) }
+        let tools = dir.appending(path: "compatibilitytools.d")
+        let current = tools.appending(path: "bridgeplay-proton-winecx-11.17")
+        let legacy = tools.appending(path: "notproton-winecx-11.1")
+        for tool in [current, legacy] { try fm.createDirectory(at: tool, withIntermediateDirectories: true) }
+        try "winecx-11.17\n".write(to: current.appending(path: "build"), atomically: true, encoding: .utf8)
+        func ps(_ lines: [String]) throws -> String {
+            let ps = dir.appending(path: "ps-\(UUID().uuidString)")
+            let body = lines.map { "echo '\($0)'" }.joined(separator: "\n")
+            try "#!/bin/sh\n\(body)\n".write(to: ps, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: ps.path(percentEncoded: false))
+            return ps.path(percentEncoded: false)
+        }
+        let script = current.appending(path: "run").path(percentEncoded: false)
+        let launching = try ps(["/sbin/launchd", "/bin/sh \(script) waitforexitandrun /G/Game.exe"])
+
+        #expect(RunnerInstaller.launchingBuild(tools: [current, legacy], ps: launching) == "winecx-11.17")
+        #expect(RunnerInstaller.launchingBuild(tools: [legacy], ps: launching) == nil)
+        #expect(RunnerInstaller.launchingBuild(tools: [], ps: launching) == nil)
+        // A tool without a build file is named by its folder.
+        let old = try ps(["/bin/sh \(legacy.appending(path: "run").path(percentEncoded: false))"])
+        #expect(RunnerInstaller.launchingBuild(tools: [current, legacy], ps: old) == "notproton-winecx-11.1")
+        // Nothing running, a longer name, a file next to run, and ps failing all read as no launch.
+        let idle = try ps(["/sbin/launchd", "/bin/sh \(script)x", "/bin/cat \(script).log", "/bin/sh /x\(script)"])
+        #expect(RunnerInstaller.launchingBuild(tools: [current, legacy], ps: idle) == nil)
+        #expect(RunnerInstaller.launchingBuild(tools: [current], ps: "/nonexistent/ps") == nil)
+
+        let runners = dir.appending(path: "runners")
+        try fm.createDirectory(at: runners.appending(path: "crossover-27"), withIntermediateDirectories: true)
+        #expect(RunnerInstaller.runningBuild(in: runners, running: { _ in false }, launching: { "winecx-11.17" }) == "winecx-11.17")
+        #expect(RunnerInstaller.runningBuild(in: runners, running: { _ in true }, launching: { "winecx-11.17" }) == "27")
+        #expect(RunnerInstaller.runningBuild(in: runners, running: { _ in false }, launching: { nil }) == nil)
     }
 
     @Test("Any build can be removed, and its tools and staged copies go with it")

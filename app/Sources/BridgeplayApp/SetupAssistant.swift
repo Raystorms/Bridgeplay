@@ -422,9 +422,7 @@ final class SetupAssistant {
         _ tool: String,
         needsChange: (String) throws -> Bool = { try SteamDefaultTool.needsChange(to: $0) },
         steamOpen: () -> Bool = { SteamBundle.isRunningForThisUser },
-        runningBuild: () -> String? = {
-            RunnerStore.clonedBuilds().first { RunnerInstaller.isRunning(from: SupportPaths.runnerRoot(forBuild: $0)) }
-        },
+        runningBuild: () -> String? = { RunnerInstaller.runningBuild() },
         stop: () throws -> Bool = { try SteamBundle.stopClient(step: defaultStep) },
         write: (String) throws -> Void = { try SteamDefaultTool.set($0) }
     ) throws {
