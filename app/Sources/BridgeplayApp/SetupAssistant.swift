@@ -51,7 +51,6 @@ final class SetupAssistant {
     // Graphics
     var gptk: WinecxD3DMetal.Payload?
     var gptkImages: [URL]
-    var skippedGraphics = false
     // "Installing the Game Porting Toolkit" once the components download is done.
     var gptkProgress: String?
     @ObservationIgnored private var componentsRate = DownloadRate()
@@ -266,7 +265,7 @@ final class SetupAssistant {
             }.value
         } catch {
             AppLog.note("setup: components failed: \(error.localizedDescription)")
-            // The script's own reason, without the core's generic sentence in front of it.
+            // The step's own reason, without the core's generic sentence in front of it.
             let detail = if case InstallerError.componentsFailure(let reason)? = error as? InstallerError { reason }
                 else { error.localizedDescription }
             message = String(localized: "The Game Porting Toolkit wasn't added. \(detail)")
