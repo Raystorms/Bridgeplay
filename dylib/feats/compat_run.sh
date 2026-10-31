@@ -237,7 +237,8 @@ fi
   echo "STEAM_COMPAT_INSTALL_PATH=$STEAM_COMPAT_INSTALL_PATH"
   echo "STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID"
   echo "-- steam env passed through --"
-  env | grep -iE '^(Steam|SDL_)' | sort
+  # Players attach this log to public issues, so the login name and video token stay out.
+  env | grep -iE '^(Steam|SDL_)' | grep -ivE '^(SteamUser|SteamAppUser|STEAMVIDEOTOKEN)=' | sort
   [ -z "$np_dropped" ] || echo "ignored on arm64 Wine: $np_dropped"
 } >> "$log" 2>&1 || true
 
@@ -459,7 +460,7 @@ gamefix_read() {
     fi
     # The keys that set a BRIDGEPLAY_ variable also take its full name: BRIDGEPLAY_RETINA=1 is RETINA=1.
     case "$key" in
-      BRIDGEPLAY_STDOUT_NULL|BRIDGEPLAY_VSYNC|BRIDGEPLAY_RETINA|BRIDGEPLAY_FRAMEGEN|BRIDGEPLAY_FRAMEGEN_?*)
+      BRIDGEPLAY_STDOUT_NULL|BRIDGEPLAY_VSYNC|BRIDGEPLAY_HIDE_WINE_EXPORTS|BRIDGEPLAY_RETINA|BRIDGEPLAY_FRAMEGEN|BRIDGEPLAY_FRAMEGEN_?*)
         key=${key#BRIDGEPLAY_} ;;
     esac
     value=${line#*=}
