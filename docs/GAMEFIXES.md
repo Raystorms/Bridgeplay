@@ -166,6 +166,23 @@ MSYNC=0
 RETINA=1
 ```
 
+## In-game quick settings
+
+While a game runs with overlay-shim loaded (a Steam game with the Steam overlay on, or one that
+sets `PERF_OVERLAY`, `FPS_LIMIT`, `SCALING_FILTER` or `FRAMEGEN`), Option-Command-P opens
+Bridgeplay's quick settings on the right edge of the game's window. They change the
+performance overlay level, the frame rate limit and the scaling filter at once, and show the
+battery and power the Mac reports. Up and Down pick a setting, Left and Right change it, a click
+on a choice picks it, and Option-Command-P, Escape or a click outside close it. While it is open
+the game gets no key presses or clicks; releases still reach it.
+
+Each change is also written to `quick-settings/<appid>.conf` in the support folder. Steam's page
+collects it within a couple of seconds and saves it to the game's launch options with the same
+logic as the Bridgeplay tab in Steam Properties, so the next launch uses it. With Steam's page
+not running, the file waits for the next time it is. The Metal HUD, when a game starts with it,
+stays the only overlay and the overlay row is locked. Controllers cannot open or move through
+the quick settings. `BRIDGEPLAY_QUICK_SETTINGS=0` in the launch options turns them off.
+
 ## Native macOS games
 
 A Mac build with no compatibility tool pinned runs through `~/.bridgeplay/np-native`, not the

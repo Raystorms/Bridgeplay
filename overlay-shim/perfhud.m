@@ -39,7 +39,10 @@ static const char *const ph_level_names[] = { "off", "fps", "summary", "detailed
 
 #define ph_ring 120
 
-static int ph_level;
+// Changed at run time by the quick settings sidebar, read on the render and sampler threads
+static _Atomic int ph_level;
+// Set when the game started with Apple's Metal HUD, which then stays the only overlay
+static int ph_hud_locked;
 static os_unfair_lock ph_lock = OS_UNFAIR_LOCK_INIT;
 // Under ph_lock, written on the render thread
 static float ph_intervals[ph_ring]; // ms between the game's frames
@@ -248,13 +251,13 @@ static void ph_gpu(struct ph_sample *s)
 	CFRelease(stats);
 }
 
-// The internal battery's charge and state. Asked every few seconds: it goes through powerd.
-static void ph_battery(struct ph_sample *s)
+// The internal battery's charge and state, -1 for what the Mac does not report. Goes through
+// powerd, so callers ask every few seconds. Keeps no state: the sidebar calls it on the main
+// thread while the overlay's sampler does on its own.
+static void ph_read_battery(int *battery_out, int *on_ac_out, int *charging_out, int *minutes_out)
 {
-	static int battery = -1, on_ac = -1, charging = -1, minutes = -1;
-
-	if (ph_ticks % 10 == 0) {
-		battery = on_ac = charging = minutes = -1;
+	int battery = -1, on_ac = -1, charging = -1, minutes = -1;
+	{
 		CFTypeRef info = IOPSCopyPowerSourcesInfo();
 		CFArrayRef list = info != NULL ? IOPSCopyPowerSourcesList(info) : NULL;
 		for (CFIndex i = 0; list != NULL && i < CFArrayGetCount(list); i++) {
@@ -283,6 +286,18 @@ static void ph_battery(struct ph_sample *s)
 		if (info != NULL)
 			CFRelease(info);
 	}
+	*battery_out = battery;
+	*on_ac_out = on_ac;
+	*charging_out = charging;
+	*minutes_out = minutes;
+}
+
+static void ph_battery(struct ph_sample *s)
+{
+	static int battery = -1, on_ac = -1, charging = -1, minutes = -1;
+
+	if (ph_ticks % 10 == 0)
+		ph_read_battery(&battery, &on_ac, &charging, &minutes);
 	s->battery = battery;
 	s->on_ac = on_ac;
 	s->charging = charging;
@@ -294,12 +309,11 @@ static void ph_battery(struct ph_sample *s)
 static double ph_power(void)
 {
 	static io_registry_entry_t battery;
-	static int looked;
+	static dispatch_once_t looked;
 
-	if (!looked) {
-		looked = 1;
+	dispatch_once(&looked, ^{
 		battery = IOServiceGetMatchingService(0, IOServiceMatching("AppleSmartBattery"));
-	}
+	});
 	if (battery == 0)
 		return -1;
 
@@ -847,6 +861,7 @@ static void ph_place(id host, CGImageRef image, CGSize size, double scale)
 		ph_layer.contentsScale = scale;
 		// Core Animation shows CGImage contents upright in a flipped tree too
 		ph_layer.contents = (id)image;
+		ph_layer.hidden = atomic_load(&ph_level) == ph_off;
 		fg_ca_end();
 		CGImageRelease(image);
 		[host release];
@@ -892,6 +907,14 @@ static void perfhud_tick(void)
 	ph_tick_frames = frames;
 	ph_tick_time = now;
 	ph_tick_written = written;
+	// Turned off from the quick settings: the counts above stay current for when it comes back
+	if (atomic_load(&ph_level) == ph_off) {
+		[host release];
+		dispatch_async(dispatch_get_main_queue(), ^{
+			ph_layer.hidden = YES;
+		});
+		return;
+	}
 
 	s.cpu = ph_cpu_percent();
 	s.game_cpu = ph_game_cpu(now);
@@ -936,6 +959,10 @@ static void perfhud_start(void)
 // Reads the setting; returns whether the overlay is on for this process.
 static int perfhud_init(void)
 {
+	// The quick settings can turn the overlay on later, so the sampler's port is always ready
+	ph_host_port = mach_host_self();
+	const char *hud = getenv("MTL_HUD_ENABLED");
+	ph_hud_locked = hud != NULL && hud[0] != '\0' && strcmp(hud, "0") != 0;
 	const char *value = getenv("NOTPROTON_PERF_OVERLAY");
 	if (value == NULL || value[0] == '\0' || strcmp(value, "0") == 0 || strcasecmp(value, "off") == 0)
 		return 0;
@@ -952,17 +979,30 @@ static int perfhud_init(void)
 		return 0;
 	}
 
-	const char *hud = getenv("MTL_HUD_ENABLED");
-	if (hud != NULL && hud[0] != '\0' && strcmp(hud, "0") != 0) {
+	if (ph_hud_locked) {
 		shim_log("overlay_shim perfhud: the Metal HUD is on, it shows instead of the %s overlay\n",
 		         ph_level_names[ph_level]);
 		ph_level = ph_off;
 		return 0;
 	}
 
-	ph_host_port = mach_host_self();
 	shim_log("overlay_shim perfhud: %s overlay on, waiting for the game's first frame\n",
 	         ph_level_names[ph_level]);
+	return 1;
+}
+
+// The quick settings' level; returns 0 when the Metal HUD owns the overlay. Main thread.
+static int perfhud_set_level(int level)
+{
+	if (ph_hud_locked || level < ph_off || level > ph_detailed)
+		return 0;
+	atomic_store(&ph_level, level);
+	if (level == ph_off && ph_layer != nil) {
+		fg_ca_begin();
+		ph_layer.hidden = YES;
+		fg_ca_end();
+	}
+	shim_log("overlay_shim perfhud: %s from the quick settings\n", ph_level_names[level]);
 	return 1;
 }
 
