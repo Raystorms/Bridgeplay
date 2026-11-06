@@ -433,8 +433,16 @@ static void ph_style_load(void)
 	CGColorSpaceRelease(srgb);
 	ph_style.value = ph_font(13, 600);
 	ph_style.value_big = ph_font(22, 600);
-	ph_style.label = ph_font(10, 500);
-	ph_style.small = ph_font(10, 400);
+	// 10.5 and 11 pt: the smallest that stay readable over a game on a Retina window
+	ph_style.label = ph_font(10.5, 500);
+	ph_style.small = ph_font(11, 400);
+}
+
+// The baseline that centres a font's capitals on the line at y: how a label and the value
+// beside it share an optical centre even at different sizes.
+static double ph_centred(double y, CTFontRef font)
+{
+	return y + CTFontGetCapHeight(font) / 2;
 }
 
 static CTLineRef ph_line(const char *text, CTFontRef font, CGColorRef color, double tracking)
@@ -500,15 +508,6 @@ static void ph_surface(CGContextRef ctx, double w, double h)
 	CGContextSetLineWidth(ctx, 1);
 	CGContextStrokePath(ctx);
 	CGPathRelease(path);
-
-	// The emphasis: a short gradient rule on the leading edge
-	CGContextSaveGState(ctx);
-	CGPathRef rule = CGPathCreateWithRoundedRect(CGRectMake(6, 7, 2, h - 14), 1, 1, NULL);
-	CGContextAddPath(ctx, rule);
-	CGContextClip(ctx);
-	ph_gradient(ctx, CGPointMake(0, h - 7), CGPointMake(0, 7));
-	CGContextRestoreGState(ctx);
-	CGPathRelease(rule);
 }
 
 static void ph_format_gb(char *out, size_t size, double bytes)
@@ -516,11 +515,11 @@ static void ph_format_gb(char *out, size_t size, double bytes)
 	snprintf(out, size, "%.1f GB", bytes / 1073741824.0);
 }
 
-// One "LABEL value" pair of the summary row; returns the advance.
-static double ph_pair(CGContextRef ctx, double h, double x, double base, const char *label, const char *value)
+// One "LABEL value" pair centred on the line at mid; returns the advance.
+static double ph_pair(CGContextRef ctx, double h, double x, double mid, const char *label, const char *value)
 {
-	double w = ph_text(ctx, h, x, base, label, ph_style.label, ph_style.fg2, 0.6);
-	return w + 5 + ph_text(ctx, h, x + w + 5, base, value, ph_style.value, ph_style.fg, 0);
+	double w = ph_text(ctx, h, x, ph_centred(mid, ph_style.label), label, ph_style.label, ph_style.fg2, 0.5);
+	return w + 5 + ph_text(ctx, h, x + w + 5, ph_centred(mid, ph_style.value), value, ph_style.value, ph_style.fg, 0);
 }
 
 static void ph_divider(CGContextRef ctx, double h, double x)
@@ -558,31 +557,33 @@ static void ph_battery_text(char *out, size_t size, const struct ph_sample *s, i
 // Lays out (ctx NULL) or draws one level; returns the size in points.
 static CGSize ph_draw_compact(CGContextRef ctx, const struct ph_sample *s, double h_box)
 {
-	const double h = 28, base = 18.5, pad = 16;
+	const double h = 28, mid = h / 2, pad = 12;
 	char fps[16];
 	ph_fps_text(fps, sizeof(fps), s);
 	double x = pad;
-	x += ph_text(ctx, h_box, x, base, fps, ph_style.value, ph_style.fg, 0);
+	x += ph_text(ctx, h_box, x, ph_centred(mid, ph_style.value), fps, ph_style.value, ph_style.fg, 0);
 	x += 4;
-	x += ph_text(ctx, h_box, x, base, "FPS", ph_style.label, ph_style.fg2, 0.6);
-	return CGSizeMake(x + 11, h);
+	x += ph_text(ctx, h_box, x, ph_centred(mid, ph_style.label), "FPS", ph_style.label, ph_style.fg2, 0.5);
+	return CGSizeMake(x + pad, h);
 }
 
 static CGSize ph_draw_summary(CGContextRef ctx, const struct ph_sample *s, double h_box)
 {
-	const double h = 28, base = 18.5, gap = 10;
+	const double h = 28, mid = h / 2, gap = 10;
+	const double base = ph_centred(mid, ph_style.value);
 	char text[48];
-	double x = 16;
+	double x = 12;
 
 	ph_fps_text(text, sizeof(text), s);
 	x += ph_text(ctx, h_box, x, base, text, ph_style.value, ph_style.fg, 0);
 	x += 4;
-	x += ph_text(ctx, h_box, x, base, "FPS", ph_style.label, ph_style.fg2, 0.6);
+	x += ph_text(ctx, h_box, x, ph_centred(mid, ph_style.label), "FPS", ph_style.label, ph_style.fg2, 0.5);
 	if (!s->idle && s->ft_avg > 0) {
 		snprintf(text, sizeof(text), "%.1f", s->ft_avg);
 		x += 8;
 		x += ph_text(ctx, h_box, x, base, text, ph_style.value, ph_style.fg, 0);
 		x += 3;
+		// A lowercase unit stays on its number's baseline
 		x += ph_text(ctx, h_box, x, base, "ms", ph_style.label, ph_style.fg2, 0.2);
 	}
 	if (s->cap > 0) {
@@ -590,7 +591,7 @@ static CGSize ph_draw_summary(CGContextRef ctx, const struct ph_sample *s, doubl
 		x += gap;
 		ph_divider(ctx, h, x);
 		x += 1 + gap;
-		x += ph_pair(ctx, h_box, x, base, "CAP", text);
+		x += ph_pair(ctx, h_box, x, mid, "CAP", text);
 	}
 
 	struct { const char *label; char value[32]; int shown; } parts[4] = {
@@ -607,7 +608,7 @@ static CGSize ph_draw_summary(CGContextRef ctx, const struct ph_sample *s, doubl
 		x += gap;
 		ph_divider(ctx, h, x);
 		x += 1 + gap;
-		x += ph_pair(ctx, h_box, x, base, parts[i].label, parts[i].value);
+		x += ph_pair(ctx, h_box, x, mid, parts[i].label, parts[i].value);
 	}
 	// On a desktop Mac the power figure has no battery to sit with
 	if (s->battery < 0 && s->watts > 0) {
@@ -615,7 +616,7 @@ static CGSize ph_draw_summary(CGContextRef ctx, const struct ph_sample *s, doubl
 		x += gap;
 		ph_divider(ctx, h, x);
 		x += 1 + gap;
-		x += ph_pair(ctx, h_box, x, base, "PWR", text);
+		x += ph_pair(ctx, h_box, x, mid, "PWR", text);
 	}
 	return CGSizeMake(x + 12, h);
 }
@@ -633,26 +634,30 @@ static int ph_graph(float *out, int max)
 
 static CGSize ph_draw_detailed(CGContextRef ctx, const struct ph_sample *s, double h_box)
 {
-	const double w = 236, left = 16, right = w - 12, row = 18;
+	// Every text line is centred in its own slot by cap height, so the padding reads the same
+	// above the first line and below the last
+	const double w = 240, left = 14, right = w - 14, row = 20, pad = 10, bottom = 12;
 	char text[64], label_ms[48];
-	double y = 0;
+	double y = pad;
 
-	// FPS and frame time
+	// FPS and frame time, centred together on one line
+	const double head = 32, head_mid = y + head / 2;
 	ph_fps_text(text, sizeof(text), s);
 	double x = left;
-	x += ph_text(ctx, h_box, x, 33, text, ph_style.value_big, ph_style.fg, -0.3);
-	ph_text(ctx, h_box, x + 5, 33, "FPS", ph_style.label, ph_style.fg2, 0.6);
+	x += ph_text(ctx, h_box, x, ph_centred(head_mid, ph_style.value_big), text, ph_style.value_big, ph_style.fg, -0.3);
+	ph_text(ctx, h_box, x + 5, ph_centred(head_mid, ph_style.label), "FPS", ph_style.label, ph_style.fg2, 0.5);
 	if (!s->idle && s->ft_avg > 0) {
 		snprintf(text, sizeof(text), "%.1f", s->ft_avg);
 		double unit = ph_width("ms", ph_style.label, 0.2);
 		double value = ph_width(text, ph_style.value, 0);
-		ph_text(ctx, h_box, right - unit - 3 - value, 33, text, ph_style.value, ph_style.fg, 0);
-		ph_text(ctx, h_box, right - unit, 33, "ms", ph_style.label, ph_style.fg2, 0.2);
+		double base = ph_centred(head_mid, ph_style.value);
+		ph_text(ctx, h_box, right - unit - 3 - value, base, text, ph_style.value, ph_style.fg, 0);
+		ph_text(ctx, h_box, right - unit, base, "ms", ph_style.label, ph_style.fg2, 0.2);
 	}
-	y = 44;
+	y += head + 6;
 
 	// Frame time graph: the last ph_ring frames, one stroke in the brand gradient
-	const double gx = left, gw = right - left, gh = 40;
+	const double gx = left, gw = right - left, gh = 38;
 	if (ctx != NULL) {
 		CGRect area = CGRectMake(gx, h_box - y - gh, gw, gh);
 		CGPathRef bg = CGPathCreateWithRoundedRect(area, 4, 4, NULL);
@@ -695,12 +700,14 @@ static CGSize ph_draw_detailed(CGContextRef ctx, const struct ph_sample *s, doub
 			CGPathRelease(path);
 		}
 	}
-	y += gh + 14;
+	y += gh;
+	// Kept close to the graph it describes, then a wider gap before the readings
 	if (!s->idle && s->ft_min > 0) {
 		snprintf(label_ms, sizeof(label_ms), "min %.1f · max %.1f ms", s->ft_min, s->ft_max);
-		ph_text(ctx, h_box, left, y, label_ms, ph_style.small, ph_style.fg3, 0);
-		y += 8;
+		ph_text(ctx, h_box, left, ph_centred(y + 4 + 9, ph_style.small), label_ms, ph_style.small, ph_style.fg3, 0);
+		y += 4 + 18;
 	}
+	y += 6;
 
 	// The rest, a label and a value per row, only what this Mac reports
 	double scale = 0;
@@ -736,12 +743,13 @@ static CGSize ph_draw_detailed(CGContextRef ctx, const struct ph_sample *s, doub
 	for (int i = 0; i < 11; i++) {
 		if (!rows[i].shown)
 			continue;
-		y += row;
-		ph_text(ctx, h_box, left, y, rows[i].label, ph_style.small, ph_style.fg2, 0);
+		double mid = y + row / 2;
+		ph_text(ctx, h_box, left, ph_centred(mid, ph_style.small), rows[i].label, ph_style.small, ph_style.fg2, 0);
 		double vw = ph_width(rows[i].value, ph_style.value, 0);
-		ph_text(ctx, h_box, right - vw, y, rows[i].value, ph_style.value, ph_style.fg, 0);
+		ph_text(ctx, h_box, right - vw, ph_centred(mid, ph_style.value), rows[i].value, ph_style.value, ph_style.fg, 0);
+		y += row;
 	}
-	return CGSizeMake(w, y + 13);
+	return CGSizeMake(w, y + bottom);
 }
 
 static CGSize ph_draw(CGContextRef ctx, const struct ph_sample *s, double h_box)
