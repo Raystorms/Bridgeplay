@@ -4,9 +4,9 @@
 //
 // Option-Command-P shows it on the right edge of the game's window; Option-Command-P or
 // Escape hides it, and so does a click outside it. Up and Down pick a setting, Left and
-// Right (or Return) change it, and a click on a choice picks it. While it shows, the game gets
-// no key presses or clicks; releases still pass, so nothing it saw pressed stays held. The
-// game keeps drawing behind it.
+// Right (or Return) change it, and a click or a drag along a slider picks a stop. While it shows,
+// the game gets no key presses, clicks or drags; releases still pass, so nothing it saw pressed
+// stays held. The game keeps drawing behind it.
 //
 // A change takes effect on the game's next frame and is written to
 // <support>/quick-settings/<appid>.conf. Steam's page collects it through the
@@ -257,20 +257,22 @@ static CGColorRef sb_gray(double alpha);
 
 // MARK: Drawing
 //
-// Two control kinds, chosen by what the choices are. The overlay level and the frame rate
-// limit are ordered steps, so each is a stepped slider whose position means something: more
-// detail to the right, a higher rate to the right with Off (no limit) at the end. The scaling
-// filters are not an order, so they stay a selector that shows every name. Text is placed by
-// centring its capitals on the line it belongs to (ph_centred), so labels and values of
-// different sizes share one optical centre.
+// Two control kinds, chosen by what the choices are. The overlay level and the frame rate limit are
+// ordered steps, so each is a stepped slider whose position means something: more detail to the
+// right; fixed rates, then Half and Display, then Off (no limit) at the end. The scaling filters
+// are not an order, so they stay a selector that shows every name. Text is placed by centring its
+// capitals on the line it belongs to (ph_centred), so labels and values of different sizes share
+// one optical centre.
 
 // Layout, in points from the panel's top-left
 #define sb_pad 22.0
 #define sb_head_mid 38.0     // title line
-#define sb_power_mid 84.0    // battery line
-#define sb_power_bar 104.0   // battery gauge
-#define sb_rows_top 132.0
-#define sb_row_h 92.0
+#define sb_power_mid 76.0    // battery line
+#define sb_power_bar 92.0    // battery gauge
+#define sb_rows_top 128.0
+#define sb_row_h 96.0
+#define sb_row_lead 10.0     // a row's band (focus tint, clicks) starts this far above its top
+#define sb_tint_inset 10.0   // the focus tint's inset from the panel's sides
 #define sb_title_mid 12.0    // a row's title line, from the row's top
 #define sb_track_mid 42.0    // slider track centre
 #define sb_stops_mid 64.0    // slider stop labels
@@ -278,14 +280,16 @@ static CGColorRef sb_gray(double alpha);
 #define sb_hit_below 32.0
 #define sb_seg_top 28.0      // selector
 #define sb_seg_h 32.0
-#define sb_note_mid 74.0     // the selector's measured note
+#define sb_note_mid 72.0     // the selector's measured note
 #define sb_thumb_r 8.0
 #define sb_inset 9.0         // stops start this far in, so the end thumbs stay inside
 
 struct sb_fonts {
-	CTFontRef title, big, row, value, stop, stop_on, seg, seg_on, small;
+	CTFontRef title, row, value, stop, stop_on, seg, seg_on, small;
 };
 static struct sb_fonts sb_f;
+
+static int sb_hover_row = -1, sb_hover_k = -1; // the stop or choice under the pointer, main thread
 
 static void sb_fonts_load(void)
 {
@@ -293,7 +297,6 @@ static void sb_fonts_load(void)
 	if (sb_f.title != NULL)
 		return;
 	sb_f.title = ph_font(17, 600);
-	sb_f.big = ph_font(22, 600);
 	sb_f.row = ph_font(13, 600);
 	sb_f.value = ph_font(13, 500);
 	sb_f.stop = ph_font(11, 500);
@@ -343,51 +346,27 @@ static double sb_text_right(CGContextRef ctx, double h, double right, double mid
 	return tw;
 }
 
-// The frame rate a limit choice gives on this display, for ordering; Off sorts last.
-static double sb_rate(const char *v, int hz)
+// Each control's stops, left to right, as indexes into its choices. The limit runs from the
+// fixed rates up, then the two tied to the display, then Off (no limit) at the end.
+static const int sb_stop_order[sb_rows][6] = {
+	{ 0, 1, 2, 3 },
+	{ 5, 4, 3, 2, 1, 0 }, // 30, 40, 60, Half, Display, Off
+	{ 0, 1, 2, 3 },
+};
+
+static int sb_stops(int row, int pick[6])
 {
-	if (strcmp(v, "0") == 0)
-		return 1e9;
-	if (strcmp(v, "display") == 0)
-		return hz > 0 ? hz : 1e6 - 1;
-	if (strcmp(v, "half") == 0)
-		return hz > 0 ? hz / 2.0 : 1e6 - 2;
-	return atof(v);
+	for (int k = 0; k < sb_counts[row]; k++)
+		pick[k] = sb_stop_order[row][k];
+	return sb_counts[row];
 }
 
-// Each choice's place along its control, left to right. The limit's places follow the rate
-// each choice gives on this display (Display and Half take what they work out to, a fixed
-// number first on a tie), so the slider stays in order on any display.
-static int sb_order(int row, int order[6])
-{
-	int n = sb_counts[row];
-	for (int i = 0; i < n; i++)
-		order[i] = i;
-	if (row != sb_limit)
-		return n;
-	int hz = atomic_load(&ph_refresh_hz);
-	for (int i = 1; i < n; i++)
-		for (int j = i; j > 0; j--) {
-			const char *a = sb_values[row][order[j - 1]], *b = sb_values[row][order[j]];
-			double ra = sb_rate(a, hz), rb = sb_rate(b, hz);
-			int b_fixed = b[0] >= '1' && b[0] <= '9', a_fixed = a[0] >= '1' && a[0] <= '9';
-			if (rb < ra || (rb == ra && b_fixed && !a_fixed)) {
-				int t = order[j - 1];
-				order[j - 1] = order[j];
-				order[j] = t;
-			} else {
-				break;
-			}
-		}
-	return n;
-}
-
-// Where the current choice sits along the control; -1 when it has none
-static int sb_position(int row, const int *order, int n)
+// The stop the current choice sits on; -1 when it has none
+static int sb_position(int row, const int *pick, int n)
 {
 	int sel = sb_index(row);
 	for (int k = 0; k < n; k++)
-		if (order[k] == sel)
+		if (sel >= 0 && pick[k] == sel)
 			return k;
 	return -1;
 }
@@ -398,65 +377,46 @@ static double sb_stop_x(double w, int k, int n)
 	return n > 1 ? x0 + (x1 - x0) * k / (n - 1) : x0;
 }
 
-// The readout beside a row's title: the choice in words
+// The words beside a row's title, only where the control alone does not say it
 static void sb_readout(int row, char *out, size_t cap)
 {
-	int sel = sb_index(row), hz = atomic_load(&ph_refresh_hz);
-	if (row == sb_overlay) {
-		snprintf(out, cap, "%s", ph_hud_locked ? "Metal HUD, set in Steam" : sb_labels[row][sel < 0 ? 0 : sel]);
+	out[0] = '\0';
+	if (row == sb_overlay && ph_hud_locked) {
+		snprintf(out, cap, "Metal HUD");
 	} else if (row == sb_limit) {
+		int sel = sb_index(row);
 		const char *v = sel < 0 ? NULL : sb_values[row][sel];
 		if (v == NULL)
 			snprintf(out, cap, "%d FPS, set in Steam", atomic_load(&fl_fixed_fps));
-		else if (strcmp(v, "0") == 0)
-			snprintf(out, cap, "Off");
-		else if (strcmp(v, "display") == 0)
-			snprintf(out, cap, hz > 0 ? "Display rate · %d FPS" : "Display rate", hz);
-		else if (strcmp(v, "half") == 0)
-			snprintf(out, cap, hz > 0 ? "Half rate · %d FPS" : "Half rate", hz / 2);
-		else
-			snprintf(out, cap, "%s FPS", v);
-	} else {
-		static const char *const names[] = { "Automatic", "Linear", "Nearest", "Integer" };
-		snprintf(out, cap, "%s", names[sel < 0 ? 0 : sel]);
+		// Half and Display name no rate, so say what they give on this display
+		else if (strcmp(v, "display") == 0 && atomic_load(&ph_refresh_hz) > 0)
+			snprintf(out, cap, "%d FPS", atomic_load(&ph_refresh_hz));
+		else if (strcmp(v, "half") == 0 && atomic_load(&ph_refresh_hz) > 0)
+			snprintf(out, cap, "%g FPS", atomic_load(&ph_refresh_hz) / 2.0);
 	}
 }
 
-static void sb_draw_slider(CGContextRef ctx, double w, double h, double top, int row, int focused, int disabled)
+static void sb_draw_slider(CGContextRef ctx, double w, double h, double top, int row, int disabled)
 {
-	int order[6], n = sb_order(row, order), pos = sb_position(row, order, n);
+	int pick[6], n = sb_stops(row, pick), pos = sb_position(row, pick, n);
+	int hover = sb_hover_row == row && !disabled ? sb_hover_k : -1;
 	double cy = top + sb_track_mid, x0 = sb_stop_x(w, 0, n), x1 = sb_stop_x(w, n - 1, n);
 
-	// The track, and from its start to the choice the brand gradient: the one place it shows
+	// A plain track with a notch at each step; the thumb alone marks the choice
 	sb_fill_round(ctx, sb_rect(h, x0 - 2, cy - 2, x1 - x0 + 4, 4), 2, PH_RGB(0x2C2C30, 1));
-	if (pos > 0 && !disabled) {
-		double xp = sb_stop_x(w, pos, n);
-		CGContextSaveGState(ctx);
-		CGPathRef fill = CGPathCreateWithRoundedRect(sb_rect(h, x0 - 2, cy - 2, xp - x0 + 4, 4), 2, 2, NULL);
-		CGContextAddPath(ctx, fill);
-		CGContextClip(ctx);
-		ph_gradient(ctx, CGPointMake(x0, 0), CGPointMake(x1, 0));
-		CGContextRestoreGState(ctx);
-		CGPathRelease(fill);
-	}
-	// Stops: a notch at each step, so the steps read before the labels do
 	for (int k = 0; k < n; k++) {
 		if (k == pos)
 			continue;
 		double sx = sb_stop_x(w, k, n);
-		double a = k < pos && !disabled ? 0.85 : 1;
-		if (k < pos && !disabled)
-			CGContextSetRGBFillColor(ctx, 1, 1, 1, a);
+		if (k == hover)
+			CGContextSetRGBFillColor(ctx, PH_RGB(0xA1A1A6, 1));
 		else
-			CGContextSetRGBFillColor(ctx, PH_RGB(0x5A5A60, a));
+			CGContextSetRGBFillColor(ctx, PH_RGB(0x5A5A60, 1));
 		CGContextFillEllipseInRect(ctx, sb_rect(h, sx - 2, cy - 2, 4, 4));
 	}
 	// The thumb, with a soft offset shadow so it sits on the track
 	if (pos >= 0) {
 		double tx = sb_stop_x(w, pos, n);
-		if (focused && !disabled)
-			sb_stroke_round(ctx, sb_rect(h, tx - sb_thumb_r - 3.5, cy - sb_thumb_r - 3.5, 2 * sb_thumb_r + 7,
-			                             2 * sb_thumb_r + 7), sb_thumb_r + 3.5, 0.32);
 		CGContextSaveGState(ctx);
 		CGColorRef shadow = sb_gray(0.55);
 		CGContextSetShadowWithColor(ctx, CGSizeMake(0, -1), 3, shadow);
@@ -468,14 +428,17 @@ static void sb_draw_slider(CGContextRef ctx, double w, double h, double top, int
 		CGContextFillEllipseInRect(ctx, sb_rect(h, tx - sb_thumb_r, cy - sb_thumb_r, 2 * sb_thumb_r, 2 * sb_thumb_r));
 		CGContextRestoreGState(ctx);
 	}
-	// Every stop named under it; the ends line up with the track's ends
+	// Every stop named under it, centred on its notch
 	double mid = top + sb_stops_mid;
 	for (int k = 0; k < n; k++) {
-		const char *label = sb_labels[row][order[k]];
+		const char *label = sb_labels[row][pick[k]];
 		CTFontRef font = k == pos ? sb_f.stop_on : sb_f.stop;
-		double tw = ph_width(label, font, 0), sx = sb_stop_x(w, k, n);
-		double lx = k == 0 ? sb_pad : k == n - 1 ? w - sb_pad - tw : sx - tw / 2;
-		CGColorRef color = disabled ? ph_style.fg3 : k == pos ? ph_style.fg : ph_style.fg3;
+		double tw = ph_width(label, font, 0), lx = sb_stop_x(w, k, n) - tw / 2;
+		if (lx < sb_pad - 4)
+			lx = sb_pad - 4;
+		if (lx + tw > w - sb_pad + 4)
+			lx = w - sb_pad + 4 - tw;
+		CGColorRef color = disabled ? ph_style.fg3 : k == pos || k == hover ? ph_style.fg : ph_style.fg3;
 		ph_text(ctx, h, lx, ph_centred(mid, font), label, font, color, 0);
 	}
 }
@@ -485,23 +448,25 @@ static double sb_seg_width(double w, int row)
 	return (w - 2 * sb_pad - 6) / sb_counts[row];
 }
 
-static void sb_draw_selector(CGContextRef ctx, double w, double h, double top, int row, int focused)
+static void sb_draw_selector(CGContextRef ctx, double w, double h, double top, int row)
 {
-	int sel = sb_index(row);
+	int sel = sb_index(row), hover = sb_hover_row == row ? sb_hover_k : -1;
 	CGRect box = sb_rect(h, sb_pad, top + sb_seg_top, w - 2 * sb_pad, sb_seg_h);
 	sb_fill_round(ctx, box, 8, PH_RGB(0x18181B, 1));
-	if (focused)
-		sb_stroke_round(ctx, CGRectInset(box, 0.5, 0.5), 7.5, 0.22);
 	double segw = sb_seg_width(w, row), mid = top + sb_seg_top + sb_seg_h / 2;
 	for (int i = 0; i < sb_counts[row]; i++) {
 		double x = sb_pad + 3 + i * segw;
 		int on = i == sel;
+		CGRect seg = sb_rect(h, x, top + sb_seg_top + 3, segw, sb_seg_h - 6);
 		if (on)
-			sb_fill_round(ctx, sb_rect(h, x, top + sb_seg_top + 3, segw, sb_seg_h - 6), 6, PH_RGB(0x34343A, 1));
+			sb_fill_round(ctx, seg, 6, PH_RGB(0x34343A, 1));
+		else if (i == hover)
+			sb_fill_round(ctx, seg, 6, PH_RGB(0x1F1F23, 1));
 		CTFontRef font = on ? sb_f.seg_on : sb_f.seg;
 		const char *label = sb_labels[row][i];
 		double tw = ph_width(label, font, 0);
-		ph_text(ctx, h, x + (segw - tw) / 2, ph_centred(mid, font), label, font, on ? ph_style.fg : ph_style.fg2, 0);
+		ph_text(ctx, h, x + (segw - tw) / 2, ph_centred(mid, font), label, font,
+		        on || i == hover ? ph_style.fg : ph_style.fg2, 0);
 	}
 	// What the filter has to work with, measured from the game's layer
 	char note[96] = "";
@@ -520,16 +485,29 @@ static void sb_draw_row(CGContextRef ctx, double w, double h, int row)
 {
 	double top = sb_rows_top + row * sb_row_h;
 	int focused = row == sb_row, disabled = row == sb_overlay && ph_hud_locked;
+	// Focus: one tint behind the whole row, the same for every kind of control
+	if (focused)
+		sb_fill_round(ctx, sb_rect(h, sb_tint_inset, top - sb_row_lead, w - 2 * sb_tint_inset, sb_row_h), 10,
+		              1, 1, 1, 0.05);
 	char readout[48];
 	sb_readout(row, readout, sizeof(readout));
 	double mid = top + sb_title_mid;
 	ph_text(ctx, h, sb_pad, ph_centred(mid, sb_f.row), sb_titles[row], sb_f.row, focused ? ph_style.fg : ph_style.fg2,
 	        -0.1);
-	sb_text_right(ctx, h, w - sb_pad, mid, readout, sb_f.value, disabled ? ph_style.fg3 : ph_style.fg);
-	if (row == sb_filter)
-		sb_draw_selector(ctx, w, h, top, row, focused);
-	else
-		sb_draw_slider(ctx, w, h, top, row, focused, disabled);
+	if (readout[0])
+		sb_text_right(ctx, h, w - sb_pad, mid, readout, sb_f.value, disabled ? ph_style.fg3 : ph_style.fg2);
+	if (row == sb_filter) {
+		sb_draw_selector(ctx, w, h, top, row);
+	} else if (disabled) {
+		// The Metal HUD is the game's only overlay: say where it is changed instead of a slider
+		// that cannot move
+		ph_text(ctx, h, sb_pad, ph_centred(top + sb_track_mid, sb_f.small), "Apple's Metal HUD is on for this game.",
+		        sb_f.small, ph_style.fg2, 0);
+		ph_text(ctx, h, sb_pad, ph_centred(top + sb_stops_mid, sb_f.small),
+		        "Change it in Steam Properties › Bridgeplay.", sb_f.small, ph_style.fg3, 0);
+	} else {
+		sb_draw_slider(ctx, w, h, top, row, 0);
+	}
 }
 
 static void sb_draw(CGContextRef ctx, double w, double h)
@@ -539,64 +517,57 @@ static void sb_draw(CGContextRef ctx, double w, double h)
 	CGContextSetFillColorWithColor(ctx, ph_style.line);
 	CGContextFillRect(ctx, CGRectMake(0, 0, 1, h));
 
-	// Title and the shortcut that closes it again
+	// Title, and the shortcut that closes it again as a Mac menu shows one
 	ph_text(ctx, h, sb_pad, ph_centred(sb_head_mid, sb_f.title), "Quick settings", sb_f.title, ph_style.fg, -0.3);
-	const char *keys = "⌥⌘P";
-	double kw = ph_width(keys, sb_f.small, 0.4);
-	CGRect key = sb_rect(h, w - sb_pad - kw - 14, sb_head_mid - 11, kw + 14, 22);
-	sb_stroke_round(ctx, CGRectInset(key, 0.5, 0.5), 5.5, 0.14);
-	ph_text(ctx, h, w - sb_pad - kw - 7, ph_centred(sb_head_mid, sb_f.small), keys, sb_f.small, ph_style.fg2, 0.4);
+	sb_text_right(ctx, h, w - sb_pad, sb_head_mid, "⌥⌘P", sb_f.value, ph_style.fg3);
 
-	// Battery and power, where the Mac reports them
+	// Battery and power, where the Mac reports them: one line of context, not the headline
 	int battery, on_ac, charging, minutes;
 	ph_read_battery(&battery, &on_ac, &charging, &minutes);
 	double watts = ph_power();
 	char text[64], state[48] = "";
 	if (battery >= 0) {
-		snprintf(text, sizeof(text), "%d%%", battery);
-		ph_text(ctx, h, sb_pad, ph_centred(sb_power_mid, sb_f.big), text, sb_f.big, ph_style.fg, -0.4);
 		if (on_ac == 1)
-			snprintf(state, sizeof(state), "%s", charging == 1 ? "Charging" : "On power");
+			snprintf(state, sizeof(state), "%s", charging == 1 ? "charging" : "on power");
 		else if (minutes > 0)
 			snprintf(state, sizeof(state), "%d:%02d left", minutes / 60, minutes % 60);
 		else
-			snprintf(state, sizeof(state), "On battery");
+			snprintf(state, sizeof(state), "on battery");
 		if (watts > 0)
-			snprintf(text, sizeof(text), "%s · %.1f W", state, watts);
+			snprintf(text, sizeof(text), "%d%% · %s · %.1f W", battery, state, watts);
 		else
-			snprintf(text, sizeof(text), "%s", state);
-		sb_text_right(ctx, h, w - sb_pad, sb_power_mid, text, sb_f.value, ph_style.fg2);
-		// A plain gauge; amber only when the battery is low and draining
-		CGRect track = sb_rect(h, sb_pad, sb_power_bar, w - 2 * sb_pad, 3);
-		sb_fill_round(ctx, track, 1.5, PH_RGB(0x222226, 1));
+			snprintf(text, sizeof(text), "%d%% · %s", battery, state);
+		ph_text(ctx, h, sb_pad, ph_centred(sb_power_mid, sb_f.value), "Battery", sb_f.value, ph_style.fg2, 0);
+		sb_text_right(ctx, h, w - sb_pad, sb_power_mid, text, sb_f.value, ph_style.fg);
+		// A thin gauge; amber only when the battery is low and draining
+		CGRect track = sb_rect(h, sb_pad, sb_power_bar, w - 2 * sb_pad, 2);
+		sb_fill_round(ctx, track, 1, PH_RGB(0x222226, 1));
 		int low = battery <= 20 && on_ac != 1;
-		CGRect fill = sb_rect(h, sb_pad, sb_power_bar, (w - 2 * sb_pad) * battery / 100.0, 3);
+		CGRect fill = sb_rect(h, sb_pad, sb_power_bar, (w - 2 * sb_pad) * battery / 100.0, 2);
 		if (low)
-			sb_fill_round(ctx, fill, 1.5, PH_RGB(0xFF9F0A, 1));
+			sb_fill_round(ctx, fill, 1, PH_RGB(0xFF9F0A, 1));
 		else
-			sb_fill_round(ctx, fill, 1.5, PH_RGB(0xA1A1A6, 1));
+			sb_fill_round(ctx, fill, 1, PH_RGB(0x8E8E93, 1));
 	} else if (watts > 0) {
 		snprintf(text, sizeof(text), "%.1f W", watts);
-		ph_text(ctx, h, sb_pad, ph_centred(sb_power_mid, sb_f.big), text, sb_f.big, ph_style.fg, -0.4);
-		sb_text_right(ctx, h, w - sb_pad, sb_power_mid, "Drawn by this Mac", sb_f.value, ph_style.fg2);
+		ph_text(ctx, h, sb_pad, ph_centred(sb_power_mid, sb_f.value), "Power drawn", sb_f.value, ph_style.fg2, 0);
+		sb_text_right(ctx, h, w - sb_pad, sb_power_mid, text, sb_f.value, ph_style.fg);
 	} else {
 		ph_text(ctx, h, sb_pad, ph_centred(sb_power_mid, sb_f.small), "No battery or power reading on this Mac",
 		        sb_f.small, ph_style.fg3, 0);
 	}
-	sb_hairline(ctx, h, sb_pad, sb_rows_top - 14, w - 2 * sb_pad);
+	sb_hairline(ctx, h, sb_pad, sb_rows_top - sb_row_lead - 8, w - 2 * sb_pad);
 
 	for (int row = 0; row < sb_rows; row++)
 		sb_draw_row(ctx, w, h, row);
 
-	// At the bottom, or right under the settings in a short window
-	double foot = sb_rows_top + sb_rows * sb_row_h + 4;
-	if (foot < h - 72)
-		foot = h - 72;
+	// Right under the settings, where the eye is after a change
+	double foot = sb_rows_top - sb_row_lead + sb_rows * sb_row_h + 8;
 	sb_hairline(ctx, h, sb_pad, foot, w - 2 * sb_pad);
 	ph_text(ctx, h, sb_pad, ph_centred(foot + 22, sb_f.small),
 	        sb_status[0] ? sb_status : "Changes apply now and are saved for this game.", sb_f.small,
 	        sb_status[0] ? ph_style.fg : ph_style.fg2, 0);
-	ph_text(ctx, h, sb_pad, ph_centred(foot + 44, sb_f.small), "↑↓ setting    ←→ change    esc close",
+	ph_text(ctx, h, sb_pad, ph_centred(foot + 42, sb_f.small), "↑↓ setting    ←→ change    esc close",
 	        sb_f.small, ph_style.fg3, 0.2);
 }
 
@@ -707,6 +678,7 @@ static void sb_close(void)
 		return;
 	sb_open = 0;
 	sb_drag_row = -1;
+	sb_hover_row = sb_hover_k = -1;
 	fg_ca_begin();
 	sb_panel.hidden = YES;
 	sb_scrim.hidden = YES;
@@ -762,26 +734,33 @@ static void sb_step(int row, int delta)
 {
 	if (row == sb_overlay && ph_hud_locked)
 		return;
-	int order[6], n = sb_order(row, order), at = sb_position(row, order, n);
+	int pick[6], n = sb_stops(row, pick), at = sb_position(row, pick, n);
 	int next = at < 0 ? (delta > 0 ? 0 : n - 1) : at + delta;
 	if (delta == 0)
 		next = at < 0 ? 0 : (at + 1) % n;
 	if (next < 0 || next >= n || next == at)
 		return;
-	sb_apply(sb_keys[row], sb_values[row][order[next]]);
+	sb_apply(sb_keys[row], sb_values[row][pick[next]]);
 }
 
-// The slider stop nearest x, applied when it is not already the choice
+// The slider stop nearest x
+static int sb_nearest_stop(int row, double x)
+{
+	int pick[6], n = sb_stops(row, pick), best = 0;
+	for (int k = 1; k < n; k++)
+		if (fabs(x - sb_stop_x(sb_width, k, n)) < fabs(x - sb_stop_x(sb_width, best, n)))
+			best = k;
+	return best;
+}
+
+// The slider stop nearest x, applied when the choice is not already on it
 static void sb_pick_stop(int row, double x)
 {
 	if (row == sb_overlay && ph_hud_locked)
 		return;
-	int order[6], n = sb_order(row, order), best = 0;
-	for (int k = 1; k < n; k++)
-		if (fabs(x - sb_stop_x(sb_width, k, n)) < fabs(x - sb_stop_x(sb_width, best, n)))
-			best = k;
-	if (best != sb_position(row, order, n))
-		sb_apply(sb_keys[row], sb_values[row][order[best]]);
+	int pick[6], n = sb_stops(row, pick), best = sb_nearest_stop(row, x);
+	if (best != sb_position(row, pick, n))
+		sb_apply(sb_keys[row], sb_values[row][pick[best]]);
 }
 
 // A click's place in the panel, from its top-left; 0 when it is not in the game's window.
@@ -802,6 +781,28 @@ static int sb_point(id event, double *x, double *y)
 	return 1;
 }
 
+// The row under a point in the panel (-1 outside the rows), and the selector choice or slider
+// stop it is on (-1 when on neither)
+static int sb_hit(double x, double y, int *row_out)
+{
+	int row = (int)floor((y - sb_rows_top + sb_row_lead) / sb_row_h);
+	*row_out = -1;
+	if (x < 0 || x > sb_width || row < 0 || row >= sb_rows)
+		return -1;
+	*row_out = row;
+	double top = sb_rows_top + row * sb_row_h;
+	if (row == sb_filter) {
+		double seg_top = top + sb_seg_top;
+		if (y < seg_top || y > seg_top + sb_seg_h || x < sb_pad + 3)
+			return -1;
+		int i = (int)floor((x - sb_pad - 3) / sb_seg_width(sb_width, row));
+		return i >= 0 && i < sb_counts[row] ? i : -1;
+	}
+	if (y < top + sb_track_mid - sb_hit_above || y > top + sb_track_mid + sb_hit_below)
+		return -1;
+	return sb_nearest_stop(row, x);
+}
+
 static void sb_click(id event)
 {
 	double x, y;
@@ -811,24 +812,37 @@ static void sb_click(id event)
 		sb_close();
 		return;
 	}
-	int row = (int)floor((y - sb_rows_top) / sb_row_h);
-	if (row < 0 || row >= sb_rows || y < sb_rows_top)
+	int row, k = sb_hit(x, y, &row);
+	if (row < 0)
 		return;
 	sb_row = row;
-	double top = sb_rows_top + row * sb_row_h;
 	if (row == sb_filter) {
-		double seg_top = top + sb_seg_top;
-		if (y >= seg_top && y <= seg_top + sb_seg_h && x >= sb_pad + 3) {
-			int i = (int)floor((x - sb_pad - 3) / sb_seg_width(sb_width, row));
-			if (i >= 0 && i < sb_counts[row] && i != sb_index(row))
-				sb_apply(sb_keys[row], sb_values[row][i]);
-		}
-	} else if (y >= top + sb_track_mid - sb_hit_above && y <= top + sb_track_mid + sb_hit_below) {
+		if (k >= 0 && k != sb_index(row))
+			sb_apply(sb_keys[row], sb_values[row][k]);
+	} else if (k >= 0) {
 		// A press on the track or its labels picks the nearest stop and starts a drag
 		sb_pick_stop(row, x);
 		sb_drag_row = row;
 	}
 	sb_redraw();
+}
+
+// The pointer over a stop or choice lights it, so a click's target shows before the click
+static void sb_hover(id event)
+{
+	double x, y;
+	int row = -1, k = -1;
+	if (sb_point(event, &x, &y))
+		k = sb_hit(x, y, &row);
+	if (row == sb_overlay && ph_hud_locked)
+		k = -1;
+	if (k < 0)
+		row = -1;
+	if (row != sb_hover_row || k != sb_hover_k) {
+		sb_hover_row = row;
+		sb_hover_k = k;
+		sb_redraw();
+	}
 }
 
 // NSApplication sendEvent:, before the game sees the event; returns 1 when it is taken.
@@ -878,12 +892,17 @@ static int sidebar_send_event(id event)
 			sb_pick_stop(sb_drag_row, x);
 			sb_redraw();
 		}
+		sb_hover(event);
 		return 1;
 	}
 	case 2: // left mouse up ends a drag, and still reaches the game
 		sb_drag_row = -1;
+		sb_hover(event);
 		return 0;
-	case 3: case 5: case 7: case 22: case 25: case 27: // other presses, moves, drags, scrolls
+	case 5: // mouse moved
+		sb_hover(event);
+		return 1;
+	case 3: case 7: case 22: case 25: case 27: // other presses, drags, scrolls
 		return 1;
 	default: // key and button releases, modifier changes: the game keeps an accurate picture
 		return 0;

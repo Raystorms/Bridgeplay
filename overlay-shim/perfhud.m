@@ -409,7 +409,7 @@ static CTFontRef ph_font(double size, double weight)
 }
 
 // The brand's colours (BridgeplayTheme.swift): off-white and secondary grey type, near-black
-// raised surface, hairline borders, and the violet-blue-pink gradient for emphasis only.
+// raised surface and hairline borders; amber only for a warning (a frame well over budget).
 #define PH_RGB(hex, a) (((hex) >> 16) & 0xff) / 255.0, (((hex) >> 8) & 0xff) / 255.0, ((hex) & 0xff) / 255.0, (a)
 
 struct ph_style {
@@ -482,18 +482,6 @@ static double ph_text(CGContextRef ctx, double h, double x, double y, const char
 	double w = CTLineGetTypographicBounds(line, NULL, NULL, NULL);
 	CFRelease(line);
 	return w;
-}
-
-static void ph_gradient(CGContextRef ctx, CGPoint from, CGPoint to)
-{
-	CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-	CGFloat stops[] = { PH_RGB(0x8B7BFF, 1), PH_RGB(0x4FB3FF, 1), PH_RGB(0xFF7AC6, 1) };
-	CGFloat at[] = { 0, 0.5, 1 };
-	CGGradientRef gradient = CGGradientCreateWithColorComponents(srgb, stops, at, 3);
-	CGContextDrawLinearGradient(ctx, gradient, from, to,
-	                            kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
-	CGGradientRelease(gradient);
-	CGColorSpaceRelease(srgb);
 }
 
 static void ph_surface(CGContextRef ctx, double w, double h)
@@ -656,8 +644,11 @@ static CGSize ph_draw_detailed(CGContextRef ctx, const struct ph_sample *s, doub
 	}
 	y += head + 6;
 
-	// Frame time graph: the last ph_ring frames, one stroke in the brand gradient
+	// Frame time graph: the last ph_ring frames in one light stroke, amber where a frame ran well
+	// over its budget. The budget is the limit's frame time, or the display's without a limit,
+	// and is drawn as the line the frames should sit on.
 	const double gx = left, gw = right - left, gh = 38;
+	double budget = s->cap > 0 ? 1000.0 / s->cap : s->hz > 0 ? 1000.0 / s->hz : 0;
 	if (ctx != NULL) {
 		CGRect area = CGRectMake(gx, h_box - y - gh, gw, gh);
 		CGPathRef bg = CGPathCreateWithRoundedRect(area, 4, 4, NULL);
@@ -672,38 +663,49 @@ static CGSize ph_draw_detailed(CGContextRef ctx, const struct ph_sample *s, doub
 		for (int i = 0; i < n; i++)
 			if (frames[i] * 1.15 > top)
 				top = frames[i] * 1.15;
-		int hz = s->hz;
-		if (hz > 0) {
-			// The display's frame interval, for scale
-			double ty = area.origin.y + (1000.0 / hz) / top * gh;
-			CGContextSetFillColorWithColor(ctx, ph_style.line);
+		if (budget > 0 && budget * 1.15 > top)
+			top = budget * 1.15;
+		if (budget > 0) {
+			double ty = area.origin.y + 3 + budget / top * (gh - 6);
+			CGContextSetRGBFillColor(ctx, 1, 1, 1, 0.16);
 			CGContextFillRect(ctx, CGRectMake(gx + 4, ty, gw - 8, 1));
 		}
 		if (n > 1) {
-			CGMutablePathRef path = CGPathCreateMutable();
+			double px[ph_ring], py[ph_ring];
+			CGMutablePathRef path = CGPathCreateMutable(), over = CGPathCreateMutable();
 			for (int i = 0; i < n; i++) {
-				double px = gx + 4 + (gw - 8) * (i + ph_ring - n) / (double)(ph_ring - 1);
-				double py = area.origin.y + 3 + (frames[i] / top) * (gh - 6);
+				px[i] = gx + 4 + (gw - 8) * (i + ph_ring - n) / (double)(ph_ring - 1);
+				py[i] = area.origin.y + 3 + (frames[i] / top) * (gh - 6);
 				if (i == 0)
-					CGPathMoveToPoint(path, NULL, px, py);
+					CGPathMoveToPoint(path, NULL, px[i], py[i]);
 				else
-					CGPathAddLineToPoint(path, NULL, px, py);
+					CGPathAddLineToPoint(path, NULL, px[i], py[i]);
+				// A frame half again over budget: the stretch into and out of it
+				if (i > 0 && budget > 0 && (frames[i] > budget * 1.5 || frames[i - 1] > budget * 1.5)) {
+					CGPathMoveToPoint(over, NULL, px[i - 1], py[i - 1]);
+					CGPathAddLineToPoint(over, NULL, px[i], py[i]);
+				}
 			}
-			CGContextSaveGState(ctx);
-			CGContextAddPath(ctx, path);
 			CGContextSetLineWidth(ctx, 1.5);
 			CGContextSetLineJoin(ctx, kCGLineJoinRound);
-			CGContextReplacePathWithStrokedPath(ctx);
-			CGContextClip(ctx);
-			ph_gradient(ctx, CGPointMake(gx, 0), CGPointMake(gx + gw, 0));
-			CGContextRestoreGState(ctx);
+			CGContextSetLineCap(ctx, kCGLineCapRound);
+			CGContextAddPath(ctx, path);
+			CGContextSetRGBStrokeColor(ctx, PH_RGB(0xD1D1D6, 0.9));
+			CGContextStrokePath(ctx);
+			CGContextAddPath(ctx, over);
+			CGContextSetRGBStrokeColor(ctx, PH_RGB(0xFF9F0A, 1));
+			CGContextStrokePath(ctx);
 			CGPathRelease(path);
+			CGPathRelease(over);
 		}
 	}
 	y += gh;
 	// Kept close to the graph it describes, then a wider gap before the readings
 	if (!s->idle && s->ft_min > 0) {
-		snprintf(label_ms, sizeof(label_ms), "min %.1f · max %.1f ms", s->ft_min, s->ft_max);
+		if (budget > 0)
+			snprintf(label_ms, sizeof(label_ms), "min %.1f · max %.1f · line %.1f ms", s->ft_min, s->ft_max, budget);
+		else
+			snprintf(label_ms, sizeof(label_ms), "min %.1f · max %.1f ms", s->ft_min, s->ft_max);
 		ph_text(ctx, h_box, left, ph_centred(y + 4 + 9, ph_style.small), label_ms, ph_style.small, ph_style.fg3, 0);
 		y += 4 + 18;
 	}

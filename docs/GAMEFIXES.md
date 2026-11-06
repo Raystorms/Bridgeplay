@@ -170,13 +170,14 @@ RETINA=1
 
 While a game runs with overlay-shim loaded (a Steam game with the Steam overlay on, or one that
 sets `PERF_OVERLAY`, `FPS_LIMIT`, `SCALING_FILTER` or `FRAMEGEN`), Option-Command-P opens
-Bridgeplay's quick settings on the right edge of the game's window. They change the
-performance overlay level, the frame rate limit and the scaling filter at once, and show the
-battery and power the Mac reports. The overlay level and the frame rate limit are stepped
-sliders (the limits are ordered by the rate each gives on the current display); the scaling
-filter is a row of named choices. Up and Down pick a setting, Left and Right change it, a click
-or a drag along a slider picks a stop, and Option-Command-P, Escape or a click outside close it.
-While it is open the game gets no key presses, clicks or drags; releases still reach it.
+Bridgeplay's quick settings on the right edge of the game's window. They change the performance
+overlay level, the frame rate limit and the scaling filter at once, and show the battery and
+power the Mac reports. The overlay level and the frame rate limit are stepped sliders. The
+limit's stops run 30, 40, 60, Half, Display, Off; with Half or Display chosen, the row shows the
+rate it gives on the current display. The scaling filter is a row of named choices. Up and Down
+pick a setting, Left and Right change it, a click or a drag along a slider picks a stop, and
+Option-Command-P, Escape or a click outside close it. While it is open the game gets no key
+presses, clicks or drags; releases still reach it.
 
 Each change is also written to `quick-settings/<appid>.conf` in the support folder. Steam's page
 collects it within a couple of seconds and saves it to the game's launch options with the same
