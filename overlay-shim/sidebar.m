@@ -402,13 +402,26 @@ static void sb_draw_slider(CGContextRef ctx, double w, double h, double top, int
 	int hover = sb_hover_row == row && !disabled ? sb_hover_k : -1;
 	double cy = top + sb_track_mid, x0 = sb_stop_x(w, 0, n), x1 = sb_stop_x(w, n - 1, n);
 
-	// A plain track with a notch at each step; the thumb alone marks the choice
+	// The track, filled with the brand gradient from its start to the choice, as the app's progress
+	// bars are; a notch at each step
 	sb_fill_round(ctx, sb_rect(h, x0 - 2, cy - 2, x1 - x0 + 4, 4), 2, PH_RGB(0x2C2C30, 1));
+	if (pos > 0) {
+		double xp = sb_stop_x(w, pos, n);
+		CGContextSaveGState(ctx);
+		CGPathRef fill = CGPathCreateWithRoundedRect(sb_rect(h, x0 - 2, cy - 2, xp - x0 + 4, 4), 2, 2, NULL);
+		CGContextAddPath(ctx, fill);
+		CGContextClip(ctx);
+		ph_gradient(ctx, CGPointMake(x0, 0), CGPointMake(x1, 0));
+		CGContextRestoreGState(ctx);
+		CGPathRelease(fill);
+	}
 	for (int k = 0; k < n; k++) {
 		if (k == pos)
 			continue;
 		double sx = sb_stop_x(w, k, n);
-		if (k == hover)
+		if (k < pos)
+			CGContextSetRGBFillColor(ctx, 1, 1, 1, 0.85);
+		else if (k == hover)
 			CGContextSetRGBFillColor(ctx, PH_RGB(0xA1A1A6, 1));
 		else
 			CGContextSetRGBFillColor(ctx, PH_RGB(0x5A5A60, 1));
