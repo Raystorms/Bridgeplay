@@ -11,6 +11,13 @@ struct ComponentsPlacementTests {
         var statuses: [String] = []
     }
 
+    private final class Lines: @unchecked Sendable {
+        private let lock = NSLock()
+        private var lines: [String] = []
+        func add(_ line: String) { lock.withLock { lines.append(line) } }
+        var all: [String] { lock.withLock { lines } }
+    }
+
     private struct Fixture {
         let root: URL, source: URL, home: URL, applications: URL
         var support: URL { home.appending(path: "Library/Application Support/bridgeplay") }
@@ -27,7 +34,7 @@ struct ComponentsPlacementTests {
             "config/gamefixes-default/default.conf": "SHIPPED=1\n",
             "config/gamefixes-default/448510.conf": "BACKEND=dxmt\n",
             "config/gamefixes-default/notes.txt": "not a conf",
-            "config/gamecontrollerdb.txt": "shipped mappings",
+            "config/gamecontrollerdb.txt": "# shipped\naaaa,Pad A,a:b0\nbbbb,Pad B,a:b1\n",
         ]
         for (path, text) in files {
             let url = source.appending(path: path)
@@ -68,7 +75,7 @@ struct ComponentsPlacementTests {
         // The user's own default.conf is never written.
         #expect(!FileManager.default.fileExists(atPath: f.support.appending(path: "gamefixes/default.conf").path))
         #expect(FileManager.default.fileExists(atPath: f.support.appending(path: ".installer").path))
-        #expect(text(f.support.appending(path: "gamecontrollerdb.txt")) == "shipped mappings")
+        #expect(text(f.support.appending(path: "gamecontrollerdb.txt")) == "# shipped\naaaa,Pad A,a:b0\nbbbb,Pad B,a:b1\n")
         #expect(calls.steam.isEmpty)
         #expect(calls.resets == 1)
         #expect(calls.statuses == [ComponentsPlacement.copyStatus])
@@ -94,12 +101,33 @@ struct ComponentsPlacementTests {
         #expect(!FileManager.default.fileExists(atPath: f.support.appending(path: "gptk").path))
     }
 
-    @Test("An older GPTK is replaced whole, and the user's mappings and edited confs stay")
+    @Test("A failed copy logs the tool's reason and shows the plain message")
+    func failureReasonIsLogged() throws {
+        let f = try fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        try FileManager.default.removeItem(at: f.source.appending(path: "gptk"))
+        let lines = Lines()
+        var placement = placement(f, Calls())
+        placement.log = { lines.add($0) }
+
+        let failure = try #require(throws: InstallerError.self) { try placement.place() }
+
+        guard case .componentsFailure(let message) = failure else {
+            Issue.record("Unexpected error: \(failure)")
+            return
+        }
+        #expect(message == "The Game Porting Toolkit could not be copied.")
+        #expect(lines.all.count == 1)
+        #expect(lines.all.first?.hasPrefix(message) == true)
+        #expect(lines.all.first?.contains("ditto") == true)
+    }
+
+    @Test("An older GPTK is replaced whole, and the user's mappings and edited confs stay (missing mappings are appended)")
     func update() throws {
         let f = try fixture()
         defer { try? FileManager.default.removeItem(at: f.root) }
         let fm = FileManager.default
-        for (path, text) in ["gptk/stale.dylib": "old", "gamecontrollerdb.txt": "my mappings",
+        for (path, text) in ["gptk/stale.dylib": "old", "gamecontrollerdb.txt": "aaaa,my pad A,a:b9\n",
                              "gamefixes/111.conf": "untouched copy", "gamefixes/222.conf": "edited copy",
                              "gamefixes-default/448510.conf": "BACKEND=d3dmetal\n"] {
             let url = f.support.appending(path: path)
@@ -113,7 +141,7 @@ struct ComponentsPlacementTests {
 
         #expect(!fm.fileExists(atPath: f.support.appending(path: "gptk/stale.dylib").path))
         #expect(try fm.contentsOfDirectory(atPath: f.support.path).filter { $0.hasPrefix(".gptk-") }.isEmpty)
-        #expect(text(f.support.appending(path: "gamecontrollerdb.txt")) == "my mappings")
+        #expect(text(f.support.appending(path: "gamecontrollerdb.txt")) == "aaaa,my pad A,a:b9\nbbbb,Pad B,a:b1\n")
         #expect(!fm.fileExists(atPath: f.support.appending(path: "gamefixes/111.conf").path))
         #expect(text(f.support.appending(path: "gamefixes/222.conf")) == "edited copy")
         #expect(text(f.support.appending(path: "gamefixes-default/448510.conf")) == "BACKEND=dxmt\n")

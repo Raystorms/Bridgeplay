@@ -157,6 +157,8 @@ final class SystemStatus {
         var id: Self { self }
     }
 
+    // A second ask replaces the first rather than queueing behind it, so the dialog on screen
+    // is always the one that will run if it is confirmed.
     var pendingConfirmation: Confirmation?
     var generation = 0
 
@@ -377,10 +379,7 @@ final class SystemStatus {
         clearFailure()
         outcome = nil
 
-        func same(_ a: URL, _ b: URL) -> Bool {
-            a.standardizedFileURL.path(percentEncoded: false) == b.standardizedFileURL.path(percentEncoded: false)
-        }
-        guard !same(picked, current) else { return }
+        guard !CrossOverSource.same(picked, current) else { return }
         if SupportPaths.Steam.isUnreachable(current) {
             let alert = NSAlert()
             alert.messageText = String(localized: "Steam at \(current.path(percentEncoded: false)) isn't connected.")
@@ -398,7 +397,7 @@ final class SystemStatus {
                 return
             }
 
-            if same(picked, SupportPaths.Steam.defaultApp) {
+            if CrossOverSource.same(picked, SupportPaths.Steam.defaultApp) {
                 UserDefaults.standard.removeObject(forKey: SupportPaths.Steam.appPathKey)
             } else {
                 UserDefaults.standard.set(picked.path(percentEncoded: false), forKey: SupportPaths.Steam.appPathKey)
@@ -455,8 +454,11 @@ final class SystemStatus {
         return String(localized: "Compatibility tool ready. \(Self.toolsRestartHint)")
     }
 
+    // `holdBack` keeps a failure out of the Status page (it is still logged and kept in
+    // lastRunError) when the caller is about to try again.
     func perform(
         from first: String,
+        holdBack: (Error) -> Bool = { _ in false },
         _ body: (_ progress: @escaping @Sendable (String) -> Void) async throws -> String?
     ) async {
         guard !runInFlight else {
@@ -476,6 +478,9 @@ final class SystemStatus {
             outcome = try await body { label in
                 Task { @MainActor in self.report(run, label) }
             }
+        } catch where holdBack(error) {
+            lastRunError = error
+            AppLog.note("run failed, trying again: \(error.localizedDescription)")
         } catch {
             record(error)
         }
@@ -603,9 +608,7 @@ final class SystemStatus {
     private func requireInstallableContent() async throws {
         try await requireUnblockedContent()
         let running = await Task.detached(priority: .utility) {
-            RunnerStore.clonedBuilds().contains {
-                RunnerInstaller.isRunning(from: SupportPaths.runnerRoot(forBuild: $0))
-            }
+            RunnerInstaller.runningBuild() != nil
         }.value
         guard !running else {
             throw StepFailure(step: SteamInstaller.step, detail: String(localized: "A game or Wine tool is running. Quit it before updating Bridgeplay."))
@@ -626,19 +629,27 @@ final class SystemStatus {
 
     // unattended: nobody pressed anything, so a Steam that opened since the decision to
     // install is left running and the install stops instead.
-    func installIntoSteam(unattended: Bool = false) async {
+    // Steam's signature is broken and only another account can sign it again. The install
+    // itself finished, so Setup carries on, but it shows as a failure until an install clears it.
+    private(set) var sealWarning: String?
+
+    func installIntoSteam(unattended: Bool = false, holdBack: (Error) -> Bool = { _ in false }) async {
         if let refusal = MigrationLaunch.shared.refusal {
             setFailure(refusal)
             AppLog.note("run refused: install waits for the 3.0 folder move")
             return
         }
-        var failedInputResets: [String]?
-        await perform(from: InstallPhase.checkingPayload.label) { progress in
+        sealWarning = nil
+        await perform(from: InstallPhase.checkingPayload.label, holdBack: holdBack) { progress in
             let lock = try DeploymentContent.acquireInstallationLock()
             defer { lock.release() }
             let stopClient = unattended ? SteamInstaller.leaveTheClient : SteamInstaller.stopTheClient
             let result = try await Task.detached(priority: .userInitiated) {
+                // Only an install that changed Steam's signature tried a reset, so only it decides.
                 try SteamInstaller.run(holdingInstallationLock: true, stopClient: stopClient,
+                                       onInputReset: { failed in
+                                           Task { @MainActor in self.controllerResetFailures = failed }
+                                       },
                                        report: { progress($0.label) })
             }.value
 
@@ -676,16 +687,14 @@ final class SystemStatus {
             try await Task.detached(priority: .userInitiated) {
                 try SteamInstaller.finish(result)
             }.value
-            failedInputResets = result.failedInputResets
 
+            // Set last, so a step that fails above is not read as a finished install.
+            sealWarning = result.sealWarning
             return parts.joined(separator: " ")
         }
         if failure == nil {
             UserDefaults.standard.removeObject(forKey: SteamPatchKeeper.pausedKey)
-        }
-        // Only an install that changed Steam's signature tried a reset, so only it decides.
-        if let failedInputResets, failure == nil, !failedInputResets.isEmpty || !controllerResetFailures.isEmpty {
-            controllerResetFailures = failedInputResets
+            if let sealWarning { setFailure(sealWarning) }
         }
     }
 
@@ -738,6 +747,7 @@ final class SystemStatus {
     @ObservationIgnored private var lastPatchCheck: Date?
     @ObservationIgnored private var lastAutoReapply: Date?
     @ObservationIgnored private var autoReapplyFailed = false
+    @ObservationIgnored private var autoReapplying = false
 
     // Called at launch, when the app comes to the front and every few minutes. Re-applies
     // Bridgeplay on its own only while Steam and every game are closed; otherwise it shows
@@ -761,6 +771,15 @@ final class SystemStatus {
 
         switch decision {
         case .nothing:
+            let deployment = seen.deployment
+            let failed = autoReapplyFailed
+            let app = SupportPaths.Steam.app
+            let stands = await Task.detached(priority: .utility) {
+                SteamPatchKeeper.failureStands(deployment, lastAttemptFailed: failed) {
+                    SteamInstaller.sealIsIntact(app)
+                }
+            }.value
+            if stands { return }
             if patchBanner != nil { AppLog.note("patch keeper (\(trigger)): Steam carries Bridgeplay again") }
             patchBanner = nil
             autoReapplyFailed = false
@@ -769,19 +788,87 @@ final class SystemStatus {
             if banner != patchBanner { AppLog.note("patch keeper (\(trigger)): \(kind) waits, \(blocker)") }
             patchBanner = banner
         case .reapply(let kind):
-            guard isIdle else { return }
-            AppLog.note("patch keeper (\(trigger)): re-applying on its own, \(kind)")
-            lastAutoReapply = now
-            await installIntoSteam(unattended: true)
-            if lastRunError is SteamInstaller.ClientStarted {
-                // Not a failure: Steam opened in the meantime, so ask as if it had been open.
-                AppLog.note("patch keeper (\(trigger)): Steam opened before re-applying, asking instead")
-                clearFailure()
-                patchBanner = SteamPatchKeeper.Banner(kind: kind, blocker: .steamRunning)
-                return
+            guard isIdle, !autoReapplying else { return }
+            autoReapplying = true
+            defer { autoReapplying = false }
+            // A failure kept back for a retry that never ran is reported after all: it can
+            // leave a Steam that still declares Bridgeplay but whose seal is broken.
+            var heldBack: Error?
+            var heldBackRun = generation
+            await SteamPatchKeeper.reapply(kind) { retrying in
+                await waitForSteamToSettle(trigger: trigger, retryingAfter: retrying ? heldBackRun : nil)
+            } attempt: { number, mayRetry in
+                // The wait gave the user time to start something of their own.
+                guard isIdle else { return false }
+                AppLog.note("patch keeper (\(trigger)): re-applying on its own, \(kind)\(number > 1 ? ", try \(number)" : "")")
+                lastAutoReapply = Date()
+                await installIntoSteam(unattended: true) { mayRetry && SteamPatchKeeper.isRetryable($0) }
+                if lastRunError is SteamInstaller.ClientStarted {
+                    // Not a failure: Steam opened in the meantime, so ask as if it had been open.
+                    AppLog.note("patch keeper (\(trigger)): Steam opened before re-applying, asking instead")
+                    clearFailure()
+                    patchBanner = SteamPatchKeeper.Banner(kind: kind, blocker: .steamRunning)
+                    // This try changed nothing, so an earlier held-back failure still stands.
+                    heldBackRun = generation
+                    return false
+                }
+                if failure == nil, let error = lastRunError {
+                    AppLog.note("patch keeper (\(trigger)): Steam was still changing, trying again")
+                    heldBack = error
+                    heldBackRun = generation
+                    return true
+                }
+                heldBack = nil
+                settleReapply(kind)
+                return false
             }
-            settleReapply(kind)
+            // A run since then, or one still going (Repair Steam, an install, Remove
+            // Everything), has its own outcome on show. A refresh is not a run.
+            if let heldBack {
+                if heldBackRun == generation, !runInFlight {
+                    AppLog.note("patch keeper (\(trigger)): no later try ran, reporting the held-back failure")
+                    record(heldBack)
+                    settleReapply(kind)
+                } else {
+                    AppLog.note("patch keeper (\(trigger)): another run followed, dropping the held-back failure")
+                }
+            }
         }
+    }
+
+    // False when Steam.app is still changing after the wait, or no longer needs Bridgeplay
+    // put back (Steam or a game started, or the user installed it meanwhile). A retry goes
+    // ahead even when the plist still declares Bridgeplay, since a failed try can leave it
+    // there with the signature broken, but only if no run (Repair Steam, Remove Everything)
+    // has happened since the try that failed.
+    private func waitForSteamToSettle(trigger: String, retryingAfter failedRun: Int?) async -> Bool {
+        let app = SupportPaths.Steam.app
+        let settled = await SteamPatchKeeper.waitForSteamToSettle {
+            await Task.detached(priority: .utility) { SteamPatchKeeper.lastChange(in: app) }.value
+        }
+        guard settled else {
+            AppLog.note("patch keeper (\(trigger)): Steam.app is still changing, trying again later")
+            return false
+        }
+        let version = AppVersion.bundled
+        let seen = await Task.detached(priority: .utility) { SteamPatchKeeper.capture(bundledVersion: version) }.value
+        // Repair Steam may have paused the keeper while it waited.
+        let paused = UserDefaults.standard.bool(forKey: SteamPatchKeeper.pausedKey)
+        let installBlocked = snapshot?.installContent.blocksInstallation == true
+        let decision = SteamPatchKeeper.decide(SteamPatchKeeper.Inputs(
+            deployment: seen.deployment,
+            previouslyDeployed: seen.previouslyDeployed,
+            steamRunning: seen.steamRunning,
+            gameRunning: seen.gameRunning,
+            paused: paused,
+            installBlocked: installBlocked))
+        if case .reapply = decision { return true }
+        if let failedRun, failedRun == generation, !runInFlight, seen.previouslyDeployed,
+           !paused, !installBlocked, !seen.steamRunning, !seen.gameRunning {
+            return true
+        }
+        AppLog.note("patch keeper (\(trigger)): nothing to re-apply after waiting for Steam, \(decision)")
+        return false
     }
 
     func reapplyFromBanner() async {

@@ -125,9 +125,9 @@ Any other release in the repository (a DXMT build, say) must be created with
   the background and installs it when Bridgeplay quits (`SUAutomaticallyUpdate`). Check
   for Updates… in the app menu does it on demand.
 - On the next launch, if the patch inside Steam is from an older Bridgeplay, the app
-  re-applies it by itself once Steam and every game are closed. If Steam is open, the
-  Status row shows "Update available" until the user installs it or relaunches with Steam
-  closed.
+  re-applies it by itself once Steam and every game are closed. While Steam or a game is
+  open, a banner says so and the Status row shows "Update available". The app looks again
+  when it comes to the front and every five minutes, so no relaunch is needed.
 
 ## Signing
 
@@ -242,6 +242,28 @@ have them from earlier apps, so they download nothing. When `fonts/` changes:
 2. Copy the pins it prints into `CJKFonts.swift`.
 3. `scripts/package-fonts.sh --publish` creates the release. `release-local.sh` stops while the
    pinned archive is missing on GitHub.
+
+## WineCX patch source
+
+The Corresponding Source for the patched Wine (WineCX) binaries in `app/Sources/BridgeplayApp/Resources/`
+(NOTICE, "Patched Wine (WineCX) binaries") is winecx (`dappermint/winecx`) at the pinned
+commits plus the patches in this repository. LGPL-2.1-or-later asks whoever distributes the
+binaries to also provide that source, so `scripts/package-wine-patch-sources.sh` publishes
+both onto a `wine-patch-sources-<id>` release of this project; `<id>` comes from the pinned
+commits and the patch files, so unchanged pins and patches give the same name and sha256.
+When `docs/WINECX.md`'s winecx pins or any of the patch directories change:
+
+1. `scripts/package-wine-patch-sources.sh`. Copy the pin it prints into NOTICE.
+2. `scripts/package-wine-patch-sources.sh --publish` creates the release. `release-local.sh`
+   stops while the pinned archive is missing on GitHub.
+
+## DXMT source
+
+Every `dxmt-<commit>` release from `scripts/build-dxmt.sh --publish` on carries the license
+texts inside the binary tarball and a `dxmt-<commit>-source.tar.gz` (the exact DXMT worktree
+the build ran from, submodules included) beside it; see [DXMT.md](DXMT.md), Rebuilding. The
+currently pinned `dxmt-e94c312.tar.gz` predates this and has neither; its source is the
+upstream commit named in NOTICE and `FreeEngine.swift` until the next rebuild.
 
 ## Compatibility reports
 

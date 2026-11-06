@@ -84,9 +84,9 @@ DEPS := $(OBJS:.o=.d)
         anchorcheck callscheck sigdb-fixtures webpatch-fixtures peicon-fixtures panel-behavior app-tests \
         tests-list overlay-shim overlay-shim-install overlay-shim-tests \
         overlay-shim-bench iconmaker icon \
-        appinfo helpers-install ntdll-resolve bridge runcheck compatcheck \
+        appinfo helpers-install ntdll-resolve detourcheck bridge runcheck compatcheck \
         compatsvc-check prefixstate-check shortcutcheck scriptcheck envcheck buildcheck settingscheck routecheck bridgecheck envpasscheck prefixnotecheck powernotecheck exitcheck anticheatcheck launchprogresscheck gamedrivecheck \
-        gamefixescheck launchercheck padcheck launch-shell activatecheck stamp-check versioncheck cicheck compat-reported-check FORCE
+        gamefixescheck launchercheck padcheck mappingscheck launch-shell activatecheck stamp-check versioncheck cicheck compat-reported-check FORCE
 
 APP_PAYLOAD := app/Sources/BridgeplayApp/Resources/payload
 
@@ -99,7 +99,8 @@ dylib: $(TARGET)
 $(APP_PAYLOAD):
 	@mkdir -p $(APP_PAYLOAD)
 
-TEST_PATHS := dylib/tests overlay-shim/tests app/Tests scripts/tests
+TEST_PATHS := dylib/tests overlay-shim/tests app/Tests scripts/tests ntdll-patch/tests \
+              native-launch/tests native-shim/tests installer/tests
 
 tests-list:
 	@for p in $(TEST_PATHS); do echo $$p; done
@@ -189,6 +190,9 @@ padcheck:
 	@if [ ! -f dylib/tests/padcheck.sh ]; then $(call SKIP,padcheck,dylib/tests/padcheck.sh); exit 0; fi; \
 	sh dylib/tests/padcheck.sh dylib/feats/compat_run.sh
 
+mappingscheck:
+	@sh installer/tests/mappingscheck.sh installer/Install.command
+
 launchercheck:
 	@if [ ! -f dylib/tests/launchercheck.sh ]; then $(call SKIP,launchercheck,dylib/tests/launchercheck.sh); exit 0; fi; \
 	sh dylib/tests/launchercheck.sh dylib/feats/compat_run.sh
@@ -219,7 +223,7 @@ l10ncheck:
 
 # runcheck owns compat_run.sh, whose warnings wait for a change that can move
 # the embedded __text baseline
-SCRIPTS := $(shell git ls-files '*.sh' 2>/dev/null | grep -v '^dylib/feats/compat_run\.sh$$')
+SCRIPTS := $(shell git ls-files '*.sh' '*.command' 2>/dev/null | grep -v '^dylib/feats/compat_run\.sh$$')
 
 scriptcheck:
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
@@ -483,6 +487,13 @@ panel-behavior:
 
 CX_ROOT ?= /Applications/CrossOver Preview.app
 
+# Every shipped x86 detour payload hands the detour the register its ntdll keeps wm in,
+# and resolve.py refuses a wm the shims cannot read. No capstone needed; the two tests
+# that disassemble skip without it.
+detourcheck:
+	@if [ ! -f ntdll-patch/shimcheck.py ]; then $(call SKIP,detourcheck,ntdll-patch/shimcheck.py); exit 0; fi; \
+	python3 ntdll-patch/shimcheck.py && python3 -m unittest discover -s ntdll-patch/tests
+
 ntdll-resolve:
 	@if [ ! -f ntdll-patch/resolve.py ]; then \
 		$(call SKIP,ntdll-resolve,ntdll-patch/resolve.py); exit 0; fi; \
@@ -492,9 +503,9 @@ ntdll-resolve:
 		echo "==> ntdll-resolve: $(CX_ROOT) not present, skipped (set CX_ROOT)"; exit 0; fi; \
 	python3 ntdll-patch/resolve.py "$(CX_ROOT)"
 
-$(ARM64_DYLIB): $(OBJS)
+$(ARM64_DYLIB): $(OBJS) $(DOBBY_LIBS)
 	@mkdir -p $(dir $@)
-	$(CC) $(LDFLAGS) -o $@ $^ $(DOBBY_LIBS) $(FRAMEWORKS) -lc++
+	$(CC) $(LDFLAGS) -o $@ $^ $(FRAMEWORKS) -lc++
 
 $(X86_STUB): dylib/stub_x86_64.c
 	@mkdir -p $(dir $@)
@@ -522,17 +533,22 @@ OVERLAY_SHIM_SRC   := overlay-shim/overlay_shim.m
 OVERLAY_SHIM_ARM   := $(OUT_DIR)/overlay-shim.arm64.dylib
 OVERLAY_SHIM_X86   := $(OUT_DIR)/overlay-shim.x86_64.dylib
 OVERLAY_SHIM       := $(OUT_DIR)/overlay-shim.dylib
+OVERLAY_SHIM_FONT  := app/Sources/BridgeplayUI/Resources/Fonts/geist.woff2
 OVERLAY_SHIM_FLAGS := -mmacosx-version-min=$(MIN_VER) $(AVAIL) -dynamiclib -O2 -Wall -Wextra \
                       -install_name @rpath/overlay-shim.dylib \
                       -framework Metal -framework QuartzCore \
-                      -framework CoreGraphics -framework CoreFoundation -framework Foundation
+                      -framework CoreGraphics -framework CoreFoundation -framework Foundation \
+                      -framework CoreText -framework IOKit \
+                      -DNP_GEIST_PATH='"$(OVERLAY_SHIM_FONT)"'
 OVERLAY_SHIM_TESTS := overlay-shim/tests
 OVERLAY_SHIM_TEST_FLAGS := -mmacosx-version-min=$(MIN_VER) -O2 -Wall -Wextra \
-                      -framework Metal -framework Foundation -framework QuartzCore -framework CoreGraphics
+                      -framework Metal -framework Foundation -framework QuartzCore -framework CoreGraphics \
+                      -framework CoreText -framework IOKit -DNP_GEIST_PATH='"$(OVERLAY_SHIM_FONT)"'
 
 overlay-shim: $(OVERLAY_SHIM)
 
-$(OVERLAY_SHIM): $(OVERLAY_SHIM_SRC) overlay-shim/framegen.m overlay-shim/quitkey.m
+$(OVERLAY_SHIM): $(OVERLAY_SHIM_SRC) overlay-shim/framegen.m overlay-shim/quitkey.m overlay-shim/perfhud.m \
+                $(OVERLAY_SHIM_FONT)
 	@mkdir -p $(OUT_DIR)
 	$(CC) -arch arm64 $(OVERLAY_SHIM_FLAGS) -o $(OVERLAY_SHIM_ARM) $<
 	$(CC) -arch x86_64 $(OVERLAY_SHIM_FLAGS) -o $(OVERLAY_SHIM_X86) $<
@@ -555,7 +571,7 @@ overlay-shim-tests: $(OVERLAY_SHIM)
 		$(call SKIP,overlay-shim-tests,$(OVERLAY_SHIM_TESTS)); exit 0; fi; \
 	mkdir -p $(OUT_DIR); \
 	fail=0; ran=0; skipped=0; \
-	for t in device bridge delivery framegen ownership; do \
+	for t in device bridge delivery framegen ownership perfhud; do \
 		for a in arm64 x86_64; do \
 			$(CC) -arch $$a $(OVERLAY_SHIM_TEST_FLAGS) -o $(OUT_DIR)/$$t.$$a \
 				$(OVERLAY_SHIM_TESTS)/$$t.m || exit 1; \
@@ -689,6 +705,8 @@ fonts:
 	fonts/build.sh
 
 app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO)
+	@# A signature file deleted from the repo must not ship from the last payload.
+	@test -n "$(APP_PAYLOAD)" && rm -rf "$(APP_PAYLOAD)/signatures"
 	@mkdir -p "$(APP_PAYLOAD)/signatures/macos.arm64"
 	@mkdir -p "$(APP_PAYLOAD)/bridge"
 	@# Staged by 0.7.51 and earlier; left behind they fail the PAYLOAD_SIGN_IDS check.
@@ -701,6 +719,7 @@ app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO)
 	cp -f signatures/macos.arm64/*.json "$(APP_PAYLOAD)/signatures/macos.arm64/"
 	@rm -rf "$(APP_PAYLOAD)/gamefixes" && mkdir -p "$(APP_PAYLOAD)/gamefixes"
 	@if ls gamefixes/*.conf >/dev/null 2>&1; then cp -f gamefixes/*.conf "$(APP_PAYLOAD)/gamefixes/"; fi
+	cp -f installer/config/gamecontrollerdb.txt "$(APP_PAYLOAD)/gamecontrollerdb.txt"
 	@set -e; for spec in $(BRIDGE_FILES); do \
 		src="$${spec%%:*}"; dst="$(APP_PAYLOAD)/bridge/$${spec##*:}"; \
 		if [ -f "$$src" ]; then cp -f "$$src" "$$dst"; \
@@ -917,7 +936,7 @@ CI_CHECKS := mincheck l10ncheck \
 	sigcheck callscheck np-test-batch-check webpatch-fixtures peicon-fixtures panel-behavior spawn-env \
 	activatecheck compat-reported-import-check compatcheck compatsvc-check prefixstate-check shortcutcheck launch-shell envcheck \
 	buildcheck settingscheck routecheck bridgecheck envpasscheck prefixnotecheck powernotecheck exitcheck anticheatcheck launchprogresscheck gamedrivecheck launchercheck \
-	seedcheck gamefixescheck versioncheck cicheck padcheck compat-reported-check np-inventory-check np-native-tests native-shim-tests \
+	seedcheck gamefixescheck versioncheck cicheck padcheck mappingscheck detourcheck compat-reported-check np-inventory-check np-native-tests native-shim-tests \
 	app-tests native-installercheck
 
 # app.yml runs the checks that need the built app in its build job and the rest in a

@@ -23,6 +23,7 @@ struct GameDefaultsView: View {
             Section {
                 choiceRow(.backend)
                 toggleRow(.metalFX)
+                toggleRow(.dlssFrameGen)
                 toggleRow(.nvapi)
                 choiceRow(.msync)
                 toggleRow(.advertiseAVX)
@@ -33,7 +34,7 @@ struct GameDefaultsView: View {
             }
             Section {
                 toggleRow(.highResolution)
-                toggleRow(.metalHUD)
+                overlayRow
                 toggleRow(.vsync)
             } header: {
                 Text("Display")
@@ -133,14 +134,63 @@ struct GameDefaultsView: View {
     }
 
     private func label(_ setting: GameDefaults.Setting) -> some View {
+        label(Self.title(setting), caption(setting))
+    }
+
+    private func label(_ title: String, _ caption: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(Self.title(setting))
+            Text(title)
                 .font(BP.sans(13, .semibold))
                 .tracking(-0.1)
-            Text(caption(setting))
+            Text(caption)
                 .foregroundStyle(.secondary)
         }
         .padding(.leading, StatusMetrics.textInset)
+    }
+
+    // Bridgeplay's performance overlay and Apple's Metal HUD are one choice, as in Steam
+    // Properties › Bridgeplay; overlay-shim shows the Metal HUD when a conf turns on both.
+    private var overlayChoice: String {
+        resolved(.metalHUD).value == "1" ? "hud" : (resolved(.perfOverlay).value ?? "0")
+    }
+
+    private var overlayCaption: String {
+        let sources = [resolved(.perfOverlay).source, resolved(.metalHUD).source]
+        var parts = [Self.summary(.perfOverlay)]
+        if sources.contains(.user) {
+            parts.append(String(localized: "Set by you."))
+        } else if sources.contains(.bridgeplay) {
+            parts.append(String(localized: "Bridgeplay's default."))
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private var overlayRow: some View {
+        HStack(alignment: .center, spacing: 0) {
+            label(Self.title(.perfOverlay), overlayCaption)
+            Spacer(minLength: 12)
+            Picker(Self.title(.perfOverlay), selection: Binding(get: { overlayChoice }, set: saveOverlay)) {
+                ForEach(Self.options(.perfOverlay) + ["hud"], id: \.self) { option in
+                    Text(Self.optionLabel(option, for: .perfOverlay)).tag(option)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+        .contextMenu {
+            if resolved(.perfOverlay).source == .user || resolved(.metalHUD).source == .user {
+                Button(String(localized: "Reset to Bridgeplay's Default")) {
+                    save(.perfOverlay, nil)
+                    save(.metalHUD, nil)
+                }
+            }
+        }
+    }
+
+    private func saveOverlay(_ choice: String) {
+        let hud = choice == "hud"
+        save(.perfOverlay, hud ? "0" : choice)
+        save(.metalHUD, hud ? "1" : "0")
     }
 
     private func choiceRow(_ setting: GameDefaults.Setting) -> some View {
@@ -188,7 +238,7 @@ struct GameDefaultsView: View {
             }
             ForEach(overrides) { item in
                 StatusRow(title: item.name ?? String(localized: "App \(item.appID)"),
-                          value: item.settings.map(Self.title).joined(separator: ", "),
+                          value: item.settings.map(Self.overrideTitle).joined(separator: ", "),
                           trailing: Self.place(item.place),
                           action: StatusAction(label: String(localized: "Open in Steam")) { Self.openInSteam(item.appID) },
                           menu: item.place == .conf
@@ -261,8 +311,10 @@ struct GameDefaultsView: View {
         case .backend: String(localized: "Graphics Backend")
         case .highResolution: String(localized: "High Resolution")
         case .metalHUD: String(localized: "Metal HUD")
+        case .perfOverlay: String(localized: "Performance Overlay")
         case .nvapi: String(localized: "Report an NVIDIA GPU")
         case .metalFX: String(localized: "DLSS through MetalFX")
+        case .dlssFrameGen: String(localized: "DLSS Frame Generation")
         case .advertiseAVX: String(localized: "Advertise AVX2 to Rosetta")
         case .msync: "MSync"
         case .vsync: String(localized: "Force VSync")
@@ -275,13 +327,24 @@ struct GameDefaultsView: View {
         }
     }
 
+    // Listed beside other settings, "Quality" alone reads as the value.
+    static func overrideTitle(_ setting: GameDefaults.Setting) -> String {
+        switch setting {
+        case .frameGenQuality: String(localized: "Frame Generation Quality")
+        case .frameGenEngine: String(localized: "Frame Generation Engine")
+        default: title(setting)
+        }
+    }
+
     static func summary(_ setting: GameDefaults.Setting) -> String {
         switch setting {
         case .backend: String(localized: "Automatic picks D3DMetal when the Game Porting Toolkit is linked, and DXMT otherwise.")
         case .highResolution: String(localized: "Sharper on Retina displays, but games run slower.")
         case .metalHUD: String(localized: "Shows frame rate and GPU details in a corner while you play.")
+        case .perfOverlay: String(localized: "Frame rate, frame time, CPU, GPU, memory and battery in the top-left corner while you play, or Apple's Metal HUD.")
         case .nvapi: String(localized: "Lets games offer DLSS, served by MetalFX. Some games take NVIDIA-only paths with it.")
         case .metalFX: String(localized: "Only takes effect when DLSS is switched on in the game.")
+        case .dlssFrameGen: String(localized: "Lets games offer DLSS frame generation. Experimental: it can freeze the Mac on some setups.")
         case .advertiseAVX: String(localized: "Many games quit without it.")
         case .msync: String(localized: "Automatic follows the engine.")
         case .vsync: String(localized: "Waits for the display even when a game turns VSync off.")
@@ -311,6 +374,11 @@ struct GameDefaultsView: View {
         case (.frameGenQuality, _): String(localized: "Balanced")
         case (.frameGenEngine, "metalfx"): "MetalFX"
         case (.frameGenEngine, _): String(localized: "Built-in optical flow")
+        case (.perfOverlay, "fps"): "FPS"
+        case (.perfOverlay, "summary"): String(localized: "Summary")
+        case (.perfOverlay, "detailed"): String(localized: "Detailed")
+        case (.perfOverlay, "hud"): String(localized: "Apple Metal HUD")
+        case (.perfOverlay, _): String(localized: "Off")
         default: option
         }
     }

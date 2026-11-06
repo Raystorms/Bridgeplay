@@ -72,6 +72,20 @@ struct PlayReportsTests {
         #expect(!session(60, status: 0).worthAsking(now: Date().addingTimeInterval(4 * 86400), wineLog: nil))
     }
 
+    @Test("A Wine log with a byte that isn't UTF-8 still shows the crash")
+    func wineLogWithInvalidByte() throws {
+        let dir = try scratchDirectory("wine-log")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = dir.appending(path: "bridgeplay-wine.log")
+        // A game's Shift-JIS output.
+        var bytes = Data("wine: Unhandled page fault on read access\n".utf8)
+        bytes.append(contentsOf: [0x83, 0x51, 0x81, 0x5B, 0x83, 0x80, 0x0A])
+        try bytes.write(to: log)
+
+        #expect(GameSession.wineCrashed(PrefixLog.text(of: log)))
+        #expect(PrefixLog.text(of: dir.appending(path: "missing.log")) == nil)
+    }
+
     @Test("The payload carries the machine, launch and redacted logs")
     func payload() throws {
         let session = GameSession(id: "x", started: Date().addingTimeInterval(-3600), ended: Date(),
@@ -195,10 +209,8 @@ struct PlayReportsTests {
     }
 
     @Test("A report says when a newer Bridgeplay was out")
-    func newerRelease() throws {
-        let name = "latest-release-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+    func newerRelease() {
+        let defaults = scratchDefaults()
         #expect(LatestRelease.newer(than: "44", defaults: defaults) == nil)
         LatestRelease.record(build: "55", version: "0.7.38", defaults: defaults)
         #expect(LatestRelease.newer(than: "44", defaults: defaults) == "0.7.38 (55)")
@@ -330,7 +342,7 @@ struct PlayReportsFlowTests {
 
     private func model(_ path: String, queue: URL, version: String = "3.4.0",
                        defaults: UserDefaults? = nil) -> (PlayReports, UserDefaults) {
-        let defaults = defaults ?? UserDefaults(suiteName: "play-reports-\(UUID().uuidString)")!
+        let defaults = defaults ?? scratchDefaults()
         return (PlayReports(defaults: defaults, version: version, sender: { FakeEndpoint.sender(path, queue: queue) }), defaults)
     }
 

@@ -178,7 +178,7 @@ struct SetupAssistantView: View {
                       tone: model.hasSpace ? .ok : .bad))
             SetupHairline()
             checked(3, StatusRow(title: String(localized: "Rosetta 2"),
-                      value: model.rosettaInstalled ? String(localized: "Installed.") : String(localized: "Apple's translator for Windows games. Asks for your Mac password."),
+                      value: model.rosettaInstalled ? String(localized: "Installed.") : model.rosettaNote ?? String(localized: "Apple's translator for Windows games. Asks for your Mac password."),
                       tone: model.rosettaInstalled ? .ok : .warning,
                       action: model.rosettaInstalled ? nil : StatusAction(
                         label: String(localized: "Install"), isProminent: true, isEnabled: !model.isWorking
@@ -225,7 +225,7 @@ struct SetupAssistantView: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first(where: { $0.pathExtension.lowercased() == "dmg" }) else { return false }
+            guard !model.isWorking, let url = urls.first(where: { $0.pathExtension.lowercased() == "dmg" }) else { return false }
             Task { await model.importGPTK(url) }
             return true
         }
@@ -483,7 +483,7 @@ struct SetupAssistantView: View {
                     .keyboardShortcut(.defaultAction)
             case .graphics:
                 if model.gptk == nil {
-                    Button("Skip") { go(forward: true) { model.skippedGraphics = true; model.advance() } }
+                    Button("Skip") { go(forward: true) { model.advance() } }
                         .buttonStyle(.pillSecondaryLarge)
                         .disabled(model.isWorking)
                 }

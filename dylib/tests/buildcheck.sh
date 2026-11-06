@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2154
 set -e
 SRC="${1:-$(dirname "$0")/../feats/compat_run.sh}"
-[ -f "$SRC" ] || { echo "buildcheck: $SRC not present, skipped"; exit 0; }
+[ -f "$SRC" ] || { echo "==> buildcheck: $SRC not present, skipped"; exit 0; }
 
 extract() { sed -n "/^$1() {\$/,/^}\$/p" "$SRC"; }
 functions=""
@@ -110,13 +110,17 @@ data=$(mktemp -d "$work/compatdata.XXXXXX")
 		else
 			echo held > "$data/during-alert"
 		fi
+		shift
+		printf '%s\n' "$@" > "$data/alert-args"
 	}
 	eval "$alert"
 	exec 8>> "$data/.notproton-prefix.lock"
 	/usr/bin/lockf -s -t 0 8
-	show_alert "title" "message"
+	show_alert "title" 'a "quoted" \ message'
 )
 is "an open alert does not keep the prefix locked" "free" "$(cat "$data/during-alert" 2>/dev/null)"
+is "alert text reaches osascript untouched, as arguments" 'title
+a "quoted" \ message' "$(cat "$data/alert-args" 2>/dev/null)"
 
 echo "== rebuild choices =="
 arch_functions="$(extract prefix_machine)

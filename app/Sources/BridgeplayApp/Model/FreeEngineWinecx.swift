@@ -76,6 +76,10 @@ struct WinecxRelease: Sendable {
     // games that turn features off under Wine (hide-wine-exports-patch/,
     // NOTPROTON_HIDE_WINE_EXPORTS). Empty where the runtime's own are kept.
     let loader: [WinecxBundledFile]
+    // rockstar-shim/: a version.dll the run script stages next to SocialClubHelper.exe and the
+    // game for ROCKSTAR_SHIM=1 (GTA V Legacy), and DXVK's dxgi as dxgx.dll, which that shim
+    // hands GTA5.exe on the dxvk backend. Empty where it is not shipped.
+    let rockstar: [WinecxBundledFile]
     // The runner build this release unpacks to, keyed by its pinned loader, and the ntdll
     // detours for it (NtdllPatcher.byBuild).
     let runner: RunnerBuild
@@ -93,9 +97,6 @@ enum FreeEngineWinecx {
     static let previous = v1115
     static let releases = [current, previous]
 
-    // The runner build of the current release.
-    static var runnerBuild: RunnerBuild { current.runner }
-    static var ntdllPatches: [NtdllPatch] { current.ntdllPatches }
     static var runnerBuilds: [RunnerBuild] { releases.map(\.runner) }
 
     static func release(build id: String) -> WinecxRelease? {
@@ -228,6 +229,16 @@ enum FreeEngineWinecx {
                               path: "lib/wine/x86_64-windows/kernelbase.dll",
                               sha256: "4d55600b204724046567688ca96132e49e53af1baac7a362f3e2bf285f669a8a"),
         ],
+        // version.dll: rockstar-shim/build.sh. dxgx.dll: x64/dxgi.dll of DXVK-macOS
+        // v1.10.3-20230507, whose d3d11.dll is byte-identical to the repack's above.
+        rockstar: [
+            WinecxBundledFile(resource: "version-rockstar-shim", ext: "dll",
+                              path: "lib/notproton-backends/rockstar-shim/x86_64-windows/version.dll",
+                              sha256: "deedb5d799330a3e274fe5cc7f569536280a2420543ef12145fcaa8fcbb7f6d4"),
+            WinecxBundledFile(resource: "dxgi-dxvk-macos-1.10.3", ext: "dll",
+                              path: "lib/notproton-backends/rockstar-shim/x86_64-windows/dxgx.dll",
+                              sha256: "e74f5c985fe98f38f1a096258ef35d62e03a64df7096837965c7383e3cfe153d"),
+        ],
         runner: RunnerBuild(
             bundleVersion: "winecx-11.17",
             releaseVersion: "WineCX 11.17",
@@ -319,6 +330,7 @@ enum FreeEngineWinecx {
         audio: [],
         d3dx: [],
         loader: [],
+        rockstar: [],
         // The hash-pinned loader is what makes it free, so a CrossOver install can never be
         // taken for it.
         runner: RunnerBuild(
@@ -332,7 +344,7 @@ enum FreeEngineWinecx {
             ],
             patchedNtdll: [
                 .x86_64Windows: "4efd956e573726777827cddaa89ef3b7f72d6cfd7b8e2049e41f5f5bdf4a6306",
-                .i386Windows: "23ee72664f172d38d76ecb8969d5c5af7e6828864dfe298338ed0e773910bc5d",
+                .i386Windows: "ffdf7f49a4b07b582a1172092a4af452b5beb7377b59f423cb2d1a1e9c18c9af",
             ],
             tools: [
                 CompatTool(name: "bridgeplay-proton-winecx", flavor: .rosetta, display: "WineCX 11.15 (msync, D3DMetal)"),
@@ -363,7 +375,7 @@ enum FreeEngineWinecx {
             NtdllPatch(
                 arch: .i386Windows,
                 payloadResource: "detour32-winecx-11.15",
-                payloadSHA256: "37daf5f795535df91bc8fcbd356f22f4fd1ab379ec4acc97ddff44037d265556",
+                payloadSHA256: "b8363acbaeedeb5f22379e0ec6394cf721c384f484b80e1f51a08fb74e41d13b",
                 caveRVA: 0xb9000,
                 payloadRVA: 0xb9000,
                 hooks: [
@@ -411,7 +423,7 @@ enum FreeEngineWinecx {
     // checks them, since they are either Wine's own or links into a Game Porting Toolkit.
     static func expectedFiles(_ release: WinecxRelease = current) -> [String: String] {
         var table: [String: String] = [FreeEngine.macDriverPath: release.macDriver]
-        for file in release.gamepad + release.network + release.nvidia + release.audio + release.d3dx + release.loader { table[file.path] = file.sha256 }
+        for file in release.gamepad + release.network + release.nvidia + release.audio + release.d3dx + release.loader + release.rockstar { table[file.path] = file.sha256 }
         for file in release.backends { table["\(backendsPath)/\(file.destination)"] = file.sha256 }
         for path in release.renderer.files.keys {
             table[release.renderer.installPath(of: path)] = release.renderer.installedHash(of: path)
@@ -500,7 +512,7 @@ enum FreeEngineWinecx {
         try fm.createDirectory(at: root.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.moveItem(at: wine, to: root)
         try FreeEngine.installMacDriver(root: root, build: release.build, sha256: release.macDriver, step: step)
-        try installBundled(release.gamepad + release.network + release.nvidia + release.audio + release.d3dx + release.loader, root: root)
+        try installBundled(release.gamepad + release.network + release.nvidia + release.audio + release.d3dx + release.loader + release.rockstar, root: root)
 
         let libraries = wine.deletingLastPathComponent()
         for file in release.backends {
@@ -535,7 +547,7 @@ enum FreeEngineWinecx {
         ]
         let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         try plist.write(to: shaped.appending(path: "Contents/Info.plist"))
-        RunnerInstaller.clearQuarantine(at: shaped)
+        try RunnerInstaller.clearQuarantine(at: shaped)
 
         let install = CrossOverSource.inspect(bundle: shaped)
         guard case .supported(let build) = install.support, build.id == release.build else {
@@ -575,7 +587,10 @@ enum FreeEngineWinecx {
         let name = "\(file.resource).\(file.ext)"
         guard let source = bundle.url(forResource: file.resource, withExtension: file.ext) else {
             AppLog.note("bundled file: \(name) not found in \(bundle.bundleURL.path(percentEncoded: false))")
-            throw StepFailure(step: step, detail: "Bridgeplay is missing its \(name). Reinstall Bridgeplay.")
+            throw StepFailure(step: step, detail: String(localized: """
+                Bridgeplay is missing its \(name). An antivirus or endpoint protection app may have \
+                quarantined it. Restore or allow the file, or exclude Bridgeplay.app, then reinstall Bridgeplay.
+                """))
         }
         let path = source.path(percentEncoded: false)
         let actual: String
@@ -583,11 +598,17 @@ enum FreeEngineWinecx {
             actual = try Digest.sha256(of: source)
         } catch {
             AppLog.note("bundled file: \(name) at \(path) can't be read: \(error.localizedDescription)")
-            throw StepFailure(step: step, detail: "Bridgeplay can't read its \(name). Reinstall Bridgeplay.")
+            throw StepFailure(step: step, detail: String(localized: """
+                Bridgeplay can't read its \(name). An antivirus or endpoint protection app may be blocking it. \
+                Allow the file, or exclude Bridgeplay.app, then reinstall Bridgeplay.
+                """))
         }
         guard actual == file.sha256 || SignedPin.matches(source, sha256: file.sha256) else {
             AppLog.note("bundled file: \(name) at \(path) has sha256 \(actual), expected \(file.sha256)")
-            throw StepFailure(step: step, detail: "Bridgeplay's \(name) doesn't match its pinned checksum. Reinstall Bridgeplay.")
+            throw StepFailure(step: step, detail: String(localized: """
+                Bridgeplay's \(name) doesn't match its pinned checksum. An antivirus or endpoint protection app \
+                may have changed it. Allow the file, or exclude Bridgeplay.app, then reinstall Bridgeplay.
+                """))
         }
         return source
     }

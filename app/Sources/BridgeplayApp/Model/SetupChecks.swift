@@ -50,13 +50,19 @@ enum SetupChecks {
     // most people, so the two common cases get plain sentences.
     static func rosettaFailure(_ error: Error) -> String {
         let text = error.localizedDescription
-        if text.contains("(-128)") || text.localizedCaseInsensitiveContains("user canceled") {
-            return String(localized: "Rosetta wasn't installed because the password window was closed. Press Install to try again.")
+        if rosettaCancelled(error) {
+            return String(localized: "Rosetta is still needed to run Windows games. The password window was closed, so it wasn't installed. Press Install to try again.")
         }
         if text.contains("(-60005)") || text.contains("(-60007)") {
             return String(localized: "Rosetta wasn't installed because macOS didn't accept the password. Use the name and password of an administrator of this Mac.")
         }
         return String(localized: "Rosetta wasn't installed. Check your internet connection and try again.")
+    }
+
+    // Closing the password window is a choice, not a failure to report.
+    static func rosettaCancelled(_ error: Error) -> Bool {
+        let text = error.localizedDescription
+        return text.contains("(-128)") || text.localizedCaseInsensitiveContains("user canceled")
     }
 
     static var loginUsers: URL {
@@ -92,11 +98,34 @@ enum SetupChecks {
     // copy in the image has to carry Valve's signature before it reaches /Applications.
     static func copySteam(
         from volume: URL, to app: URL,
-        verify: (URL) throws -> Void = { try SteamRepair.verifyValveSignature($0, step: step) }
+        verify: (URL) throws -> Void = { try SteamRepair.verifyValveSignature($0, step: step) },
+        copy: (URL, URL) throws -> Void = { source, target in
+            try Shell.check("/usr/bin/ditto", [source.path(percentEncoded: false), target.path(percentEncoded: false)])
+        }
     ) throws {
         let mounted = volume.appending(path: "Steam.app")
         try verify(mounted)
-        try Shell.check("/usr/bin/ditto", [mounted.path(percentEncoded: false), app.path(percentEncoded: false)])
+        // Staged under its own name, so a failed copy never leaves a half-copied Steam.app that
+        // would pass as installed. A Steam.app that appeared meanwhile is kept.
+        let fm = FileManager.default
+        let staged = app.deletingLastPathComponent().appending(path: "\(stagedPrefix)\(UUID().uuidString)")
+        let hold = try StageLock(claiming: staged)
+        defer {
+            try? fm.removeItem(at: staged)
+            hold.release()
+        }
+        StageLock.sweep(in: staged.deletingLastPathComponent(), prefix: stagedPrefix)
+        try copy(mounted, staged)
+        do { try fm.moveItem(at: staged, to: app) }
+        catch where isAppBundle(app) {}
+    }
+
+    private static let stagedPrefix = ".Steam.app-"
+
+    private static func isAppBundle(_ app: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        let plist = app.appending(path: "Contents/Info.plist").path(percentEncoded: false)
+        return FileManager.default.fileExists(atPath: plist, isDirectory: &isDirectory) && !isDirectory.boolValue
     }
 
     static let step = String(localized: "Install Steam")

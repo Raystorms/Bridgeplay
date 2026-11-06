@@ -106,7 +106,7 @@ lib/libSDL2-2.0.0.dylib                           SDL 2.32.10, x86_64, for wineb
 ```
 
 DXMT comes from `dxmt-e94c312.tar.gz` (the WineHQ engine's pin, shared download cache).
-`winemetal.so` and both `winemetal.dll` are replaced together, since they share one unix-call
+`winemetal.so` and both `winemetal.dll` files are replaced together, since they share one unix-call
 table and never mix with 0.80. The D3D DLLs get the 16 bytes of the Wine builtin marker at
 0x40 overwritten with a DOS stub, the same bytes winecx-gptk writes, so they load as natives
 from a prefix: Wine swaps a marked DLL found in a prefix for the `lib/wine` builtin of the
@@ -385,6 +385,8 @@ python3 resolve.py ../Libraries/Wine          # self-tests against PINNED
 python3 apply.py <ntdll.dll> <out> <detour bin>   # patched hashes
 ```
 
+- Any new or bumped engine needs a 32-bit game smoke test: launch a 32-bit game from Steam on it and check that it reaches Steam. `make detourcheck` only proves each detour reads the register its pin names.
+
 4.7.3 (`winecx-11.17`): both detours fit in `.text` padding. The detour payloads and
 every other shipped file are in [Shipped binaries](#shipped-binaries).
 
@@ -404,11 +406,21 @@ every other shipped file are in [Shipped binaries](#shipped-binaries).
 | clean x86_64 ntdll | `5710d16382c7a822ed8b1cba58d95fd86fe01905f039c296ca7224abff8f98e8` |
 | patched x86_64 ntdll | `4efd956e573726777827cddaa89ef3b7f72d6cfd7b8e2049e41f5f5bdf4a6306` |
 | clean i386 ntdll | `e1b208073c804a443e64ada577899d96a5c8eaee435813e4a30e0d143bca6e3c` |
-| patched i386 ntdll | `23ee72664f172d38d76ecb8969d5c5af7e6828864dfe298338ed0e773910bc5d` |
+| patched i386 ntdll | `ffdf7f49a4b07b582a1172092a4af452b5beb7377b59f423cb2d1a1e9c18c9af` |
 
 The unpack test (`FreeEngineWinecxTests.unpacksRealArchive`, once per release) checks all of
 this against the real archive when `NOTPROTON_WINECX_ARCHIVE` points at it, or when it sits in
 Bridgeplay's download cache.
+
+## Corresponding Source
+
+Every patched binary below (LGPL-2.1-or-later) is built from winecx (`dappermint/winecx`) at
+the commit pinned at the top of this page plus one of the patches above. The license asks
+whoever distributes these binaries to also provide that source, so
+`scripts/package-wine-patch-sources.sh` publishes winecx's source at those commits with the
+patches and recipes onto a `wine-patch-sources-<id>` release of this project, pinned in
+NOTICE. See [RELEASING.md](RELEASING.md), WineCX patch source, for when to rebuild and
+republish it.
 
 ## Shipped binaries
 
@@ -437,6 +449,8 @@ rebuilt Mach-O file needs its line there updated too; `SignedPinTests` fails unt
 | `d3dx11_43-winecx-11.17-i386.dll` | `d3dx11-patch/` | `dd4dd351f2a5880c9848d5ccf4944a0b5e7622bb7fb196544115b1f9c92d749c` | `FreeEngineWinecx.v1117.d3dx` |
 | `d3dx11_42-winecx-11.17.dll` | `d3dx11-patch/` | `3d97e1de9000a78e27eb5c90d0ab9b36d54fd350760063da27226d22c90c8e1b` | `FreeEngineWinecx.v1117.d3dx` |
 | `d3dx11_42-winecx-11.17-i386.dll` | `d3dx11-patch/` | `85075f8b4f30f1a993238a0d6ab772a3a3df6c031e87ee9401c4367a527cd57c` | `FreeEngineWinecx.v1117.d3dx` |
+| `version-rockstar-shim.dll` | `rockstar-shim/` | `deedb5d799330a3e274fe5cc7f569536280a2420543ef12145fcaa8fcbb7f6d4` | `FreeEngineWinecx.v1117.rockstar` |
+| `dxgi-dxvk-macos-1.10.3.dll` | DXVK-macOS v1.10.3-20230507 `x64/dxgi.dll`, unmodified | `e74f5c985fe98f38f1a096258ef35d62e03a64df7096837965c7383e3cfe153d` | `FreeEngineWinecx.v1117.rockstar` |
 | `winemac-winecx-11.17.so` | `winemac-patch/winecx-11.17-d3dmetal-retina.patch` | `aa192f846ad15d56de200fc92752eaf2d455700846ae2cf1ccc7b27b535f1c00` | `FreeEngineWinecx.v1117.macDriver` |
 | `winebus-winecx-11.17.so` | Controllers (SDL2 build) | `6223c035c824c90708abbc3e733f8d1d6ed6b8b4e9a3e1a5c813493ceba50473` | `FreeEngineWinecx.v1117.gamepad` |
 | `winebus-winecx-11.17.sys` | `winebus-patch/` | `da108d1c3788fa32807ef08c4d26d8a89812c230317ffa7ba5111e126bda607c` | `FreeEngineWinecx.v1117.gamepad` |
@@ -460,7 +474,7 @@ rebuilt Mach-O file needs its line there updated too; `SignedPinTests` fails unt
 | `detour32-fex-41069.bin` | `ntdll-patch/build32.sh` (fex-41069) | `6ff6c7289e639c4caad85c2670bfa849d9f36baa24152b6979896caede5e249b` | `NtdllPatcher.byBuild` |
 | `detour32-fex-41073.bin` | `ntdll-patch/build32.sh` (fex-41073) | `e0b3a73bb287ecdebe7a9516a732b60e8de95fa0a756ae5ea4c5bd46e4a807c2` | `NtdllPatcher.byBuild` |
 | `detour32-fex.bin` | `ntdll-patch/build32.sh` (fex) | `b4c697ba396ecb59125c505666ad3465d1208b8a1e3e53a0c457657b341376b9` | `NtdllPatcher.byBuild` |
-| `detour32-winecx-11.15.bin` | `ntdll-patch/build32.sh` (winecx-11.15) | `37daf5f795535df91bc8fcbd356f22f4fd1ab379ec4acc97ddff44037d265556` | `FreeEngineWinecx.v1115.ntdllPatches` |
+| `detour32-winecx-11.15.bin` | `ntdll-patch/build32.sh` (winecx-11.15) | `b8363acbaeedeb5f22379e0ec6394cf721c384f484b80e1f51a08fb74e41d13b` | `FreeEngineWinecx.v1115.ntdllPatches` |
 | `detour32-winecx-11.17.bin` | `ntdll-patch/build32.sh` (winecx-11.17) | `085df281ffe81c2803f44dd30df885248e5510c8560f0f20a5ae36e8446f7559` | `FreeEngineWinecx.v1117.ntdllPatches` |
 | `detour32-winehq-11.15.bin` | `ntdll-patch/build32.sh` (winehq-11.15) | `527431a3a74e9dff7bc3582277ddfa7b44bcac6fba285c028fd2c94fd9202418` | `NtdllPatcher.byBuild` |
 | `detour32.bin` | `ntdll-patch/build32.sh` (rosetta) | `2758d4f6783c853c460187f83f4fb9b1105380d194126ef83fc85e2596d3036a` | `NtdllPatcher.byBuild` |

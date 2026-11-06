@@ -10,7 +10,9 @@ every game, and the last two are named after the game's Steam app id:
 
 A later file wins per key. A variable you set in the game's Steam launch options
 (`NAME=value %command%`) wins over all four files. Bridgeplay replaces the files in
-`gamefixes-default/` on every install and never writes to your `<appid>.conf`.
+`gamefixes-default/` on every install. It changes your `<appid>.conf` only if you click
+Use Defaults for that game on the Game Defaults page, which saves a copy in `backups/` and
+removes the file's lines for the settings that page shows.
 
 The Game Defaults page in the app edits file 2. It rewrites only the lines for the settings
 it shows and keeps every other line and comment. When you pick what files below it already
@@ -26,7 +28,7 @@ installed (`.installer/default.conf`) and writes `KEY=0` for a shipped `KEY=1` y
 deleted, so your file keeps only your own changes.
 
 Bridgeplay's own variables are spelled `BRIDGEPLAY_*` (`BRIDGEPLAY_RETINA=1`). The
-`NOTPROTON_*` spelling from before 3.0.0 still works, in launch options and in conf files.
+`NOTPROTON_*` spelling from before 3.0.0 still works in launch options. Conf files reject it.
 
 ## Format
 
@@ -51,11 +53,13 @@ logged, when:
 | `FRAMEGEN_UI` | `0`, `1` | Same as `BRIDGEPLAY_FRAMEGEN_UI`, Protect UI: keeps static HUD and menus sharp. On when unset |
 | `FRAMEGEN_FALLBACK` | `0`, `1` | Same as `BRIDGEPLAY_FRAMEGEN_FALLBACK`, Fast-motion fallback: skips generated frames that would smear. On when unset |
 | `FRAMEGEN_ENGINE` | `own`, `metalfx` | Same as `BRIDGEPLAY_FRAMEGEN_ENGINE`: the built-in optical flow (`own`, the default) or MetalFX frame interpolation |
-| `NVAPI` | `0`, `1` | `1` turns on Apple's `nvapi64` and `nvngx` (DLSS on MetalFX) on an engine with a linked Game Porting Toolkit, for `d3dmetal` only, and makes D3DMetal report an NVIDIA GeForce RTX 4090 (`D3DM_VENDOR_ID=0x10de`, `D3DM_DEVICE_ID=0x2684`, `D3DM_DEVICE_DESCRIPTION`; a `D3DM_*` from a conf or the launch options wins) and a driver version of 32.0.15.9541 (`NOTPROTON_DRIVER_VERSION`), since games offer DLSS only on an NVIDIA adapter. Without the key, the run script treats it as `0`. Bridgeplay's `gamefixes-default/default.conf` sets `NVAPI=1`, so it is on for every game unless a game's conf or launch options say `NVAPI=0`. An nvapi that answers sends some games down NVIDIA-only paths, which is the reason to turn it off |
+| `PERF_OVERLAY` | `0`, `fps`, `summary`, `detailed` | Same as `BRIDGEPLAY_PERF_OVERLAY`: Bridgeplay's performance overlay, drawn by overlay-shim in the top-left corner. `fps` is the frame rate alone, `summary` one row with frame time, CPU, GPU, memory and battery, `detailed` a panel with a frame-time graph. Off (`0`) by default. It sits on the game's Metal layer (D3DMetal, DXMT, DXVK through MoltenVK, native Metal games), not on OpenGL. `MTL_HUD_ENABLED=1` shows Apple's Metal HUD instead of it |
+| `NVAPI` | `0`, `1` | `1` turns on Apple's `nvapi64` and `nvngx` (DLSS on MetalFX) on an engine with a linked Game Porting Toolkit, for `d3dmetal` only, and makes D3DMetal report an NVIDIA GeForce RTX 4090 (`D3DM_VENDOR_ID=0x10de`, `D3DM_DEVICE_ID=0x2684`, `D3DM_DEVICE_DESCRIPTION`; a `D3DM_*` from a conf or the launch options wins) and a driver version of 32.0.15.9541 (`NOTPROTON_DRIVER_VERSION`), since games offer DLSS only on an NVIDIA adapter. Without the key, the run script treats it as `0`. Bridgeplay's `gamefixes-default/default.conf` sets `NVAPI=1`, so it is on for every game unless a later conf says `NVAPI=0`. It has no launch-option spelling. An nvapi that answers sends some games down NVIDIA-only paths, which is the reason to turn it off |
 | `DLSS_FG` | `0`, `1` | With `NVAPI=1` on `d3dmetal`, `1` sets `CX_ACTIVE_GRAPHICS_BACKEND=d3dmetal` so WineCX reports hardware GPU scheduling, which DLSS frame generation requires. Experimental and off by default (`gamefixes-default/default.conf` leaves it out): [frankea/Whisky#231](https://github.com/frankea/Whisky/pull/231) saw MetalFX frame interpolation on an M5 with D3DMetal 4.0b2 hang WindowServer |
 | `STDOUT_NULL` | `0`, `1` | `1` starts the game without a stdout handle, as Steam on Windows does. Source 2 treats any stdout as a console build (`Plat_IsConsoleApplication`) and then skips NGX, so Deadlock offers no DLSS |
 | `VSYNC` | `0`, `1` | `1` makes the game's Metal layer wait for the display even when the game turns vsync off, like forcing vsync in the NVIDIA control panel. For games that lock vsync off with frame generation on (Resident Evil Requiem) and tear above the refresh rate |
 | `HIDE_WINE_EXPORTS` | `0`, `1` | `1` makes `GetProcAddress` fail for ntdll's `wine_*` exports on the WineCX 11.17 engine (`hide-wine-exports-patch/`), like Wine Staging's `HideWineExports`. For games that turn features off under Wine: The Witcher 3 5.0 skips NVIDIA Streamline, so no DLSS |
+| `ROCKSTAR_SHIM` | `0`, `1` | `1` stages `rockstar-shim/`'s `version.dll` next to `SocialClubHelper.exe` (`C:\Program Files\Rockstar Games\Social Club`) and next to the game's exe at the game launch, and adds `version=n,b`. It makes the Rockstar Games Launcher's CEF windows draw on winemac and, on `dxvk`, gives GTA5.exe DXVK's dxgi instead of D3DMetal's (`NOTPROTON_ROCKSTAR_DXGI`). A `version.dll` the folder already had (a mod loader) is moved to `version.dll.bridgeplay-orig` first. Without the key, or on an engine without the shim, staged copies are removed and that file is put back, except in a game folder another launch (another macOS user's too) is still using. WineCX 11.17 only; GTA V Legacy's `gamefixes/271590.conf` sets it. Details in `rockstar-shim/README.md` |
 | `DXMT_*`, `DXVK_*`, `MVK_*`, `VKD3D_*`, `D3DM_*`, `STAGING_*` | any | Exported as is |
 | `MTL_HUD_ENABLED`, `WINEDEBUG`, `WINE_LARGE_ADDRESS_AWARE`, `WINE_CPU_TOPOLOGY` | any | Exported as is |
 | `CX_FWD_COMPAT_GL_CTX` | any | Exported as is: WineCX's switch for forward-compatible OpenGL contexts, for testing OpenGL (`wined3d`) games |
@@ -169,7 +173,8 @@ with variable names as they are (`BRIDGEPLAY_FRAMEGEN=2`, `NP_PAD_MODE=hid`, `MT
 1. `~/Library/Application Support/bridgeplay/gamefixes/native-default.conf`, for every native game
 2. `~/Library/Application Support/bridgeplay/gamefixes/native/<appid>.conf`, which wins per key
 
-The Bridgeplay tab in Steam Properties for such a game shows the Metal HUD, Frame Generation and the controller
+The Bridgeplay tab in Steam Properties for such a game shows the performance overlay
+(`BRIDGEPLAY_PERF_OVERLAY`, or `MTL_HUD_ENABLED=1` for the Metal HUD), Frame Generation and the controller
 layer (`NP_PAD_MODE`: `hid`, `gc` or `off`). It writes the launch options as
 `<home>/.bridgeplay/np-native VAR=VALUE ... %command% <game args>`, and rewrites the older
 `/usr/bin/arch -arm64 -x86_64 -e VAR=VALUE ... %command%` form into that one, dropping its

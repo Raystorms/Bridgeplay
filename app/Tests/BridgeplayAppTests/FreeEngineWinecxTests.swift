@@ -32,7 +32,6 @@ struct FreeEngineWinecxTests {
     func currentAndPrevious() throws {
         #expect(FreeEngineWinecx.current.build == "winecx-11.17")
         #expect(FreeEngineWinecx.previous.build == "winecx-11.15")
-        #expect(FreeEngineWinecx.runnerBuild == FreeEngineWinecx.current.runner)
         #expect(FreeEngineWinecx.current.runner.tools.map(\.name) == ["bridgeplay-proton-winecx-11.17"])
         #expect(FreeEngineWinecx.previous.runner.tools.map(\.name) == ["bridgeplay-proton-winecx"])
         let current = FreeEngineWinecx.current.runner
@@ -76,7 +75,6 @@ struct FreeEngineWinecxTests {
             #expect(CrossOverLicense.freeBuild(at: root) == nil)
             #expect(!CrossOverLicense.check(crossOverRoot: root, searchDirs: []).licensed)
             #expect(!FreeEngineWinecx.isInstalled(release, engines: engines))
-            #expect(!WinecxD3DMetal.isWinecx(root: root))
             #expect(FreeEngineWinecx.release(forRoot: root) == nil)
         }
     }
@@ -271,6 +269,24 @@ struct FreeEngineWinecxTests {
         #expect(Set(release.d3dx.map(\.path)) == expected)
         let table = FreeEngineWinecx.expectedFiles(release)
         for file in release.d3dx {
+            let bundled = try #require(Bundle.module.url(forResource: file.resource, withExtension: file.ext))
+            #expect(Digest.sha256IfPresent(bundled) == file.sha256, "\(file.resource)")
+            #expect(table[file.path] == file.sha256, "\(file.path)")
+        }
+    }
+
+    // rockstar-shim: 11.17 ships the shim and DXVK's dxgi beside the backends, outside any
+    // backend folder the run script stages into system32.
+    @Test("rockstar-shim ships with the app and is pinned for 11.17",
+          arguments: FreeEngineWinecx.releases.map(\.build))
+    func rockstar(id: String) throws {
+        let release = try #require(FreeEngineWinecx.release(build: id))
+        let expected: Set<String> = release.build == "winecx-11.17"
+            ? ["lib/notproton-backends/rockstar-shim/x86_64-windows/version.dll",
+               "lib/notproton-backends/rockstar-shim/x86_64-windows/dxgx.dll"] : []
+        #expect(Set(release.rockstar.map(\.path)) == expected)
+        let table = FreeEngineWinecx.expectedFiles(release)
+        for file in release.rockstar {
             let bundled = try #require(Bundle.module.url(forResource: file.resource, withExtension: file.ext))
             #expect(Digest.sha256IfPresent(bundled) == file.sha256, "\(file.resource)")
             #expect(table[file.path] == file.sha256, "\(file.path)")
@@ -768,7 +784,10 @@ struct FreeEngineWinecxTests {
 
         #expect(try FreeEngineWinecx.bundledSource(file("fixture", pin), in: bundle).lastPathComponent == "fixture.dll")
         #expect(detail(file("absent", pin))?.contains("missing its absent.dll") == true)
-        #expect(detail(file("fixture", String(repeating: "0", count: 64)))?.contains("doesn't match") == true)
+        #expect(detail(file("absent", pin))?.contains("antivirus") == true)
+        let changed = detail(file("fixture", String(repeating: "0", count: 64)))
+        #expect(changed?.contains("doesn't match") == true)
+        #expect(changed?.contains("antivirus") == true)
 
         let root = try makeDirectory("bundled-root")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -778,6 +797,8 @@ struct FreeEngineWinecxTests {
         let path = fixture.path(percentEncoded: false)
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path) }
-        #expect(detail(file("fixture", pin))?.contains("can't read") == true)
+        let unreadable = detail(file("fixture", pin))
+        #expect(unreadable?.contains("can't read") == true)
+        #expect(unreadable?.contains("antivirus") == true)
     }
 }

@@ -13,16 +13,30 @@ import Testing
 
     @Test func keepsEveryOtherLineAndReplacesOnlyItsOwn() {
         let text = "# mine\nMTL_HUD_ENABLED=1\nRETINA=1\nBRIDGEPLAY_RETINA=1\nROSETTA_ADVERTISE_AVX=1\n"
-        let off = GameDefaults.setting(.highResolution, to: false, in: text)
+        let off = GameDefaults.setting(.highResolution, to: "0", in: text)
         #expect(off == "# mine\nMTL_HUD_ENABLED=1\nROSETTA_ADVERTISE_AVX=1\n")
-        let on = GameDefaults.setting(.metalHUD, to: true, in: "# mine\nROSETTA_ADVERTISE_AVX=1")
+        let on = GameDefaults.setting(.metalHUD, to: "1", in: "# mine\nROSETTA_ADVERTISE_AVX=1")
         #expect(on == "# mine\nROSETTA_ADVERTISE_AVX=1\nMTL_HUD_ENABLED=1\n")
     }
 
     @Test func startsANewFileWithItsHeaderAndEmptiesItWhenAllIsOff() {
-        let on = GameDefaults.setting(.metalHUD, to: true, in: "")
+        let on = GameDefaults.setting(.metalHUD, to: "1", in: "")
         #expect(on == GameDefaults.header + "\nMTL_HUD_ENABLED=1\n")
-        #expect(GameDefaults.setting(.metalHUD, to: false, in: "MTL_HUD_ENABLED=1\n") == "")
+        #expect(GameDefaults.setting(.metalHUD, to: "0", in: "MTL_HUD_ENABLED=1\n") == "")
+    }
+
+    @Test func thePerformanceOverlayIsALevelOffByDefault() {
+        #expect(GameDefaults.resolve(.perfOverlay, user: "", shipped: "") == .init(value: "0", source: .engine))
+        #expect(GameDefaults.value(.perfOverlay, in: "PERF_OVERLAY=summary\n") == "summary")
+        #expect(GameDefaults.value(.perfOverlay, in: "BRIDGEPLAY_PERF_OVERLAY=detailed\n") == "detailed")
+        // What the run script refuses is skipped, as it is there
+        #expect(GameDefaults.value(.perfOverlay, in: "PERF_OVERLAY=fps\nPERF_OVERLAY=full\n") == "fps")
+        #expect(GameDefaults.refusal("full", for: .perfOverlay) != nil)
+        #expect(GameDefaults.setting(.perfOverlay, to: "fps", in: "") == GameDefaults.header + "\nPERF_OVERLAY=fps\n")
+        #expect(GameDefaults.setting(.perfOverlay, to: "0", in: "BRIDGEPLAY_PERF_OVERLAY=fps\n") == "")
+        #expect(GameDefaults.Setting.perfOverlay.launchKeys == ["BRIDGEPLAY_PERF_OVERLAY", "NOTPROTON_PERF_OVERLAY"])
+        #expect(GameDefaults.launchOverrides("BRIDGEPLAY_PERF_OVERLAY=summary %command%") == [.perfOverlay])
+        #expect(GameDefaults.confOverrides("PERF_OVERLAY=detailed\nMTL_HUD_ENABLED=1\n") == [.metalHUD, .perfOverlay])
     }
 
     @Test func writesAndReadsBackAFile() throws {
@@ -41,11 +55,11 @@ import Testing
     @Test func offOverAShippedOnIsWrittenAsZero() {
         let shipped = "NVAPI=1\nROSETTA_ADVERTISE_AVX=1\n"
         #expect(GameDefaults.isOn(.nvapi, in: "", shipped: shipped))
-        let off = GameDefaults.setting(.nvapi, to: false, in: "", shipped: shipped)
+        let off = GameDefaults.setting(.nvapi, to: "0", in: "", shipped: shipped)
         #expect(off == GameDefaults.header + "\nNVAPI=0\n")
         #expect(!GameDefaults.isOn(.nvapi, in: off, shipped: shipped))
         // Back on is what the shipped file already gives, so the line goes.
-        #expect(GameDefaults.setting(.nvapi, to: true, in: off, shipped: shipped) == GameDefaults.header + "\n")
+        #expect(GameDefaults.setting(.nvapi, to: "1", in: off, shipped: shipped) == GameDefaults.header + "\n")
     }
 
     @Test func resetRemovesTheLineWhateverItSays() {
@@ -57,10 +71,16 @@ import Testing
     @Test func choicesAndTheirFallbacks() {
         #expect(GameDefaults.setting(.backend, to: "dxvk", in: "") == GameDefaults.header + "\nBACKEND=dxvk\n")
         // Protect UI is on when unset, so on writes nothing and off writes 0.
-        #expect(GameDefaults.setting(.frameGenUI, to: true, in: "") == "")
-        #expect(GameDefaults.setting(.frameGenUI, to: false, in: "") == GameDefaults.header + "\nFRAMEGEN_UI=0\n")
+        #expect(GameDefaults.setting(.frameGenUI, to: "1", in: "") == "")
+        #expect(GameDefaults.setting(.frameGenUI, to: "0", in: "") == GameDefaults.header + "\nFRAMEGEN_UI=0\n")
         #expect(GameDefaults.setting(.frameGenQuality, to: "balanced", in: "") == "")
         #expect(GameDefaults.value(.frameGen, in: "BRIDGEPLAY_FRAMEGEN=1\n") == "2")
+    }
+
+    // The run script applies these only on D3DMetal, so their rows carry its caption.
+    @Test func d3dMetalSettingsNameTheirRequirement() {
+        let needing = GameDefaults.Setting.allCases.filter { $0.requirement == .d3dmetal }
+        #expect(Set(needing) == [.nvapi, .dlssFrameGen, .metalFX])
     }
 
     @Test func layersResolveAsTheRunScriptReadsThem() {

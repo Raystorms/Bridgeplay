@@ -81,10 +81,16 @@ private final class DelayedToolScan: @unchecked Sendable {
     private let lock = NSLock()
     private var calls = 0
     private let tools: [InstalledTool]
-    let entered = DispatchSemaphore(value: 0)
+    // Finishes once the first scan has started. Awaited, not timed: a busy test run can take
+    // longer than any fixed timeout to get the first load this far.
+    let entered: AsyncStream<Void>
+    private let enteredContinuation: AsyncStream<Void>.Continuation
     let resume = DispatchSemaphore(value: 0)
 
-    init(_ tools: [InstalledTool]) { self.tools = tools }
+    init(_ tools: [InstalledTool]) {
+        self.tools = tools
+        (entered, enteredContinuation) = AsyncStream.makeStream()
+    }
 
     func list() -> [InstalledTool] {
         let first = lock.withLock {
@@ -92,7 +98,8 @@ private final class DelayedToolScan: @unchecked Sendable {
             return calls == 1
         }
         if first {
-            entered.signal()
+            enteredContinuation.yield()
+            enteredContinuation.finish()
             resume.wait()
             return []
         }
@@ -236,7 +243,7 @@ struct PrefixesModelTests {
         #expect(!model.isLoading)
     }
 
-    @Test("A superseded tool scan cannot replace the newer prefix records")
+    @Test("A superseded tool scan cannot replace the newer prefix records", .timeLimit(.minutes(1)))
     func supersededToolScanPublishesNothing() async throws {
         let (oldDir, oldLibrary) = try makeLibrary(appIDs: ["1574480"])
         defer { try? FileManager.default.removeItem(at: oldDir) }
@@ -251,11 +258,8 @@ struct PrefixesModelTests {
         defer { scan.resume.signal() }
         let model = PrefixesModel(libraries: { libraries.current }, installedTools: { scan.list() })
         let first = Task { await model.load() }
-        let entered = await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(returning: scan.entered.wait(timeout: .now() + 5) == .success)
-            }
-        }
+        var entered = false
+        for await _ in scan.entered { entered = true }
         try #require(entered)
 
         libraries.current = [newLibrary]
@@ -402,7 +406,7 @@ struct PrefixesModelTests {
 
         await model.backUp([first])
         #expect(model.outcome == "Backed up the prefix for \(first.title).")
-        #expect(model.failure == nil)
+        #expect(model.report?.message == nil)
 
         await model.backUp(targets)
         #expect(model.outcome == "Backed up 2 prefixes.")
@@ -432,7 +436,7 @@ struct PrefixesModelTests {
         #expect(model.outcome == "Rebuilt 3 prefixes. Each original is kept beside the game's "
             + "prefix. Check that your saves are present in the games, then delete the backups "
             + "to save space.")
-        #expect(model.failure == nil)
+        #expect(model.report?.message == nil)
         #expect(model.busy.isEmpty)
         #expect(!model.isBusy)
     }
@@ -456,7 +460,7 @@ struct PrefixesModelTests {
         #expect(model.outcome == "Rebuilt 2 prefixes. Each original is kept beside the game's "
             + "prefix. Check that your saves are present in the games, then delete the backups "
             + "to save space.")
-        #expect(model.failure == "1649240 refused")
+        #expect(model.report?.message == "1649240 refused")
         #expect(model.busy.isEmpty)
     }
 
@@ -502,7 +506,7 @@ struct PrefixesModelTests {
         #expect(model.outcome == "Rebuilt the prefix for \(target.title). The original is at "
             + "\(backup). Check that your save is present in the game, then delete the backup "
             + "to save space.")
-        #expect(model.failure == nil)
+        #expect(model.report?.message == nil)
     }
 
     @Test("A rebuild that parked nothing says nothing about a backup")
@@ -551,7 +555,7 @@ struct PrefixesModelTests {
         await model.deleteBackups(model.backups)
 
         #expect(model.outcome == "Deleted 4 backups across 2 prefixes.")
-        #expect(model.failure == nil)
+        #expect(model.report?.message == nil)
         #expect(model.backups.isEmpty)
         #expect(model.prefixes.allSatisfy { PrefixStore.backups(of: $0).isEmpty })
     }
@@ -603,7 +607,7 @@ struct PrefixesModelTests {
 
         #expect(model.backups.isEmpty)
         #expect(model.outcome == nil)
-        #expect(model.failure == nil)
+        #expect(model.report?.message == nil)
     }
 
     private func park(_ stamps: [String: [String]], in library: SteamLibrary) throws {
@@ -695,12 +699,39 @@ struct PrefixesModelTests {
         await model.delete(model.selectedPrefixes)
 
         #expect(model.prefixes.map(\.appID) == ["253750"])
-        #expect(model.failure == nil)
+        #expect(model.report?.message == nil)
         #expect(
                 model.outcome
                     == "Deleted 2 prefixes. Steam will make a new prefix if a game is launched again.")
         #expect(model.busy.isEmpty)
         #expect(!model.isLoading)
+    }
+
+    @Test("A game in two libraries is two prefixes, and deleting one keeps the other")
+    func sameGameInTwoLibraries() async throws {
+        let (firstDir, first) = try makeLibrary(appIDs: ["1574480"])
+        let (secondDir, second) = try makeLibrary(appIDs: ["1574480"])
+        defer {
+            try? FileManager.default.removeItem(at: firstDir)
+            try? FileManager.default.removeItem(at: secondDir)
+        }
+        let saves = [first, second].map {
+            $0.compatdata.appending(path: "1574480/pfx/drive_c/users/crossover/save.dat")
+        }
+        for save in saves { try write("save", to: save) }
+        let model = PrefixesModel(libraries: { [first, second] })
+        await model.load()
+        #expect(model.prefixes.count == 2)
+
+        let stale = try #require(model.prefixes.first { $0.library == second })
+        model.selection = [stale.id]
+        #expect(model.selectedPrefixes == [stale])
+
+        await model.delete(model.selectedPrefixes)
+
+        #expect(FileManager.default.fileExists(atPath: saves[0].path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: saves[1].path(percentEncoded: false)))
+        #expect(model.prefixes.map(\.library) == [first])
     }
 
     @Test("Deleting one prefix says which one")
@@ -747,7 +778,7 @@ struct PrefixesModelTests {
         // there and still listed.
         #expect(model.prefixes.map(\.appID) == ["253750"])
         #expect(model.outcome?.contains("Deleted the prefix for App 1574480.") == true)
-        #expect(model.failure?.contains("is running. Quit the game first.") == true)
+        #expect(model.report?.message.contains("is running. Quit the game first.") == true)
         #expect(model.busy.isEmpty)
     }
 
@@ -777,7 +808,7 @@ struct PrefixesModelTests {
 
         #expect(model.prefixes.count == 1)
         #expect(model.outcome == "untouched")
-        #expect(model.failure == nil)
+        #expect(model.report?.message == nil)
         #expect(!model.isLoading)
     }
 

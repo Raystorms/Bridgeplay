@@ -3,6 +3,7 @@
 # all archs. Internal development tool, ugly
 import hashlib, pathlib, struct, sys, re, bisect, capstone
 from capstone import x86 as X86, arm64 as A64
+from wmguard import refuse_unsafe, refuse_writes
 
 ARCH = {0x8664: 'x86_64-windows', 0x14c: 'i386-windows', 0xaa64: 'aarch64-windows'}
 
@@ -117,7 +118,7 @@ PINNED = {
     'e1b208073c804a443e64ada577899d96a5c8eaee435813e4a30e0d143bca6e3c':
         {'hookRVA': 0x4f7c0, 'stolen': 'f645b4027529', 'caveRVA': 0xb9000, 'caveSize': 4096,
          'resume': 0x4f7c6, 'wm': 'ebx', 'load_path': -0x5c,
-         'payload': '37daf5f795535df91bc8fcbd356f22f4fd1ab379ec4acc97ddff44037d265556',
+         'payload': 'b8363acbaeedeb5f22379e0ec6394cf721c384f484b80e1f51a08fb74e41d13b',
          'exports': {'LdrGetDllHandle': 0x7bc12a60, 'LdrLoadDll': 0x7bc13600,
                      'NtProtectVirtualMemory': 0x7bc0d764, 'NtOpenFile': 0x7bc0d594,
                      'NtReadFile': 0x7bc0d2c4, 'NtClose': 0x7bc0d354}},
@@ -341,6 +342,12 @@ def steal(insns, k, need=5):
     return taken, total
 
 
+def window(insns):
+    """What wmguard.refuse_writes needs from each capstone instruction."""
+    return [(i.address, f"{i.mnemonic} {i.op_str}".strip(), i.mnemonic,
+             [i.reg_name(r) for r in i.regs_access()[1]]) for i in insns]
+
+
 def resolve_amd64(pe):
     md = pe.cs()
     tvrva, text = pe.text()
@@ -368,19 +375,22 @@ def resolve_amd64(pe):
     if len(calls) != 1:
         raise SystemExit(f"{pe.path}: {len(calls)} alloc_module calls in build_module, want 1")
 
-    k, wm = calls[0] + 1, None
+    k, wm, wm_k = calls[0] + 1, None, None
     while True:
         i = body[k]
         if i.mnemonic == 'test' and i.op_str == 'rax, rax':
             k += 1
         elif i.mnemonic == 'mov' and i.op_str.endswith(', rax'):
-            wm = i.op_str.split(',')[0].strip()
+            wm, wm_k = i.op_str.split(',')[0].strip(), k
             k += 1
         elif i.mnemonic in ('je', 'jz'):
             k += 1
         else:
             break
     hook = body[k]
+    refuse_unsafe(pe.path, 'x86_64', wm)
+    refuse_writes(pe.path, 'x86_64', wm, window(body[wm_k + 1:k]),
+                  f"between the move at {body[wm_k].address:#x} and the hook at {hook.address:#x}")
     slot = amd64_load_path(pe, body, hook.address)
     return {'build_module': bm, 'alloc_module': am, 'wm': wm, 'load_path': slot,
             'hookRVA': hook.address, 'stolen': hook.bytes.hex(), 'insn': f"{hook.mnemonic} {hook.op_str}"}
@@ -494,6 +504,11 @@ def resolve_i386(pe):
     flags_slot = mem[0].mem.disp
 
     taken, total = steal(body, hook_k)
+    # The shim reads wm at the hook, but it is found at the MODREF test below it.
+    refuse_unsafe(pe.path, 'i386', wm)
+    refuse_writes(pe.path, 'i386', wm, window(body[hook_k:anchor]),
+                  f"between the hook at {body[hook_k].address:#x} and the MODREF test at "
+                  f"{body[anchor].address:#x}")
 
     jk = None
     for k in range(gate + 1, min(gate + 8, len(body))):

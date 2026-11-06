@@ -210,13 +210,57 @@ struct UninstallTests {
         try Shell.check("/usr/bin/chflags", ["uchg", dylib])
         defer { _ = try? Shell.check("/usr/bin/chflags", ["nouchg", dylib]) }
 
+        // The scratch bundle is not the Steam that may be open on this Mac.
         #expect(throws: (any Error).self) {
             try Uninstall.detach(
-                from: layout.app, innerPlist: layout.innerPlist, updateBlocks: [layout.updateBlock])
+                from: layout.app, innerPlist: layout.innerPlist, updateBlocks: [layout.updateBlock],
+                steamClosed: { true })
         }
 
         #expect(SteamBundle.currentInsert(at: layout.outerPlist) == nil)
         #expect(try verifies(layout.app))
+    }
+
+    @Test("A removal whose signing stopped because Steam opened leaves that Steam alone")
+    func failureWithSteamOpenLeavesItAlone() throws {
+        let layout = try layout(signable: true)
+        defer { try? FileManager.default.removeItem(at: layout.root) }
+        let dylib = layout.dylib.path(percentEncoded: false)
+        try Shell.check("/usr/bin/chflags", ["uchg", dylib])
+        defer { _ = try? Shell.check("/usr/bin/chflags", ["nouchg", dylib]) }
+        let before = try Data(contentsOf: layout.app.appending(path: "Contents/MacOS/steam_osx"))
+
+        #expect(throws: (any Error).self) {
+            try Uninstall.detach(
+                from: layout.app, innerPlist: layout.innerPlist, updateBlocks: [layout.updateBlock],
+                steamClosed: { false })
+        }
+
+        #expect(try Data(contentsOf: layout.app.appending(path: "Contents/MacOS/steam_osx")) == before)
+    }
+
+    @Test("Steam opening between the two recovery signatures stops the second")
+    func steamOpeningMidRecoveryStopsIt() throws {
+        let layout = try layout(signable: true)
+        defer { try? FileManager.default.removeItem(at: layout.root) }
+        let dylib = layout.dylib.path(percentEncoded: false)
+        try Shell.check("/usr/bin/chflags", ["uchg", dylib])
+        defer { _ = try? Shell.check("/usr/bin/chflags", ["nouchg", dylib]) }
+        let executable = layout.app.appending(path: "Contents/MacOS/steam_osx")
+        let seal = layout.app.appending(path: "Contents/_CodeSignature/CodeResources")
+        let executableBefore = try Data(contentsOf: executable)
+        let sealBefore = try Data(contentsOf: seal)
+
+        // Closed for the executable's signature, open by the time the app's would start.
+        var checks = 0
+        #expect(throws: (any Error).self) {
+            try Uninstall.detach(
+                from: layout.app, innerPlist: layout.innerPlist, updateBlocks: [layout.updateBlock],
+                steamClosed: { checks += 1; return checks == 1 })
+        }
+
+        #expect(try Data(contentsOf: executable) != executableBefore)
+        #expect(try Data(contentsOf: seal) == sealBefore)
     }
 
     @Test("A restore that fails does not cancel the removal")
@@ -512,14 +556,47 @@ struct UninstallTests {
     }
 
     private func remove(_ layout: Layout, app: URL? = nil,
+                         leftovers: Uninstall.Leftovers? = nil,
                          repair: @escaping Uninstall.Repair = { _, _ in },
                          stop: Uninstall.Stop = { _, _ in false }) async throws -> UninstallOutcome {
         try await Uninstall.run(
             app: app ?? layout.app, innerPlist: layout.innerPlist, updateBlocks: [layout.updateBlock],
             legacyCompat: layout.legacyCompat, compatTools: layout.compatTools,
             directories: [layout.support, layout.caches], libraries: [],
-            modifications: layout.modifications, lockFolder: layout.root, leftovers: layout.leftovers,
+            modifications: layout.modifications, lockFolder: layout.root, leftovers: leftovers ?? layout.leftovers,
             repair: repair, stop: stop)
+    }
+
+    @Test("A running game stops the removal before Steam is touched")
+    func refusesWhileAGameRuns() async throws {
+        let layout = try layout()
+        defer { try? FileManager.default.removeItem(at: layout.root) }
+        var leftovers = layout.leftovers
+        leftovers.runningBuild = { "27.0.0" }
+        let stops = Flag()
+
+        let failure = try await #require(throws: StepFailure.self) {
+            try await remove(layout, leftovers: leftovers, stop: { _, _ in stops.set(); return false })
+        }
+
+        #expect(failure.detail.contains("27.0.0"))
+        #expect(!stops.value)
+        #expect(FileManager.default.fileExists(atPath: layout.support.path))
+        #expect(try SteamModifications.inspect(layout.app) == .modified)
+    }
+
+    @Test("--remove-everything fails while a game runs")
+    func commandRefusesWhileAGameRuns() async throws {
+        let layout = try layout()
+        defer { try? FileManager.default.removeItem(at: layout.root) }
+        var leftovers = layout.leftovers
+        leftovers.runningBuild = { "27.0.0" }
+        let captured = leftovers
+
+        let exitCode = await RemoveEverythingCommand.perform { _ in try await remove(layout, leftovers: captured) }
+
+        #expect(exitCode == 1)
+        #expect(FileManager.default.fileExists(atPath: layout.support.path))
     }
 
     @Test("Removal cleans both tracked copies when the first drive returns")

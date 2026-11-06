@@ -42,6 +42,8 @@ final class SetupAssistant {
 
     // Mac
     var rosettaInstalled = SetupChecks.rosettaInstalled()
+    // Set when the password window was closed; the Rosetta row says so in place of an error.
+    var rosettaNote: String?
     let appleSilicon = SetupChecks.isAppleSilicon
     let macOSSupported = SetupChecks.macOSVersion.majorVersion >= SetupChecks.minimumMacOS
     let freeBytes = SetupChecks.freeBytes()
@@ -49,7 +51,6 @@ final class SetupAssistant {
     // Graphics
     var gptk: WinecxD3DMetal.Payload?
     var gptkImages: [URL]
-    var skippedGraphics = false
     // "Installing the Game Porting Toolkit" once the components download is done.
     var gptkProgress: String?
     @ObservationIgnored private var componentsRate = DownloadRate()
@@ -184,12 +185,18 @@ final class SetupAssistant {
     func installRosetta() async {
         isWorking = true
         defer { isWorking = false }
+        rosettaNote = nil
+        message = nil
         if isPreview { await pretend(); rosettaInstalled = true; return }
         do {
             try await Task.detached(priority: .userInitiated) { try SetupChecks.installRosetta() }.value
         } catch {
             AppLog.note("setup: Rosetta install failed: \(error.localizedDescription)")
-            message = SetupChecks.rosettaFailure(error)
+            if SetupChecks.rosettaCancelled(error) {
+                rosettaNote = SetupChecks.rosettaFailure(error)
+            } else {
+                message = SetupChecks.rosettaFailure(error)
+            }
         }
         rosettaInstalled = SetupChecks.rosettaInstalled()
     }
@@ -197,6 +204,8 @@ final class SetupAssistant {
     // MARK: Graphics
 
     func importGPTK(_ image: URL) async {
+        // A drop can arrive mid-import, and a second import deletes the first one's staging folder.
+        guard !isWorking else { return }
         // The toolkit is copied into the support folder, which the 3.0 move has to find untouched.
         if let refusal = MigrationLaunch.shared.refusal {
             message = refusal
@@ -258,7 +267,7 @@ final class SetupAssistant {
             }.value
         } catch {
             AppLog.note("setup: components failed: \(error.localizedDescription)")
-            // The script's own reason, without the core's generic sentence in front of it.
+            // The step's own reason, without the core's generic sentence in front of it.
             let detail = if case InstallerError.componentsFailure(let reason)? = error as? InstallerError { reason }
                 else { error.localizedDescription }
             message = String(localized: "The Game Porting Toolkit wasn't added. \(detail)")
@@ -366,7 +375,7 @@ final class SetupAssistant {
 
         set("steam", .running)
         await status.installIntoSteam()
-        if let failure = status.failure {
+        if let failure = status.failure, status.sealWarning == nil {
             if status.failureRemedy == .appManagement {
                 askForAppManagement(status)
             } else if let tool = (status.lastRunError as? SteamInstaller.ForeignInsert)?.tool {
@@ -402,6 +411,8 @@ final class SetupAssistant {
             return
         }
 
+        // The later steps cleared it, so the Status page shows it again after Setup.
+        if let warning = status.sealWarning { status.setFailure(warning) }
         UserDefaults.standard.set(true, forKey: Self.finishedKey)
         step = .done
     }
@@ -413,9 +424,7 @@ final class SetupAssistant {
         _ tool: String,
         needsChange: (String) throws -> Bool = { try SteamDefaultTool.needsChange(to: $0) },
         steamOpen: () -> Bool = { SteamBundle.isRunningForThisUser },
-        runningBuild: () -> String? = {
-            RunnerStore.clonedBuilds().first { RunnerInstaller.isRunning(from: SupportPaths.runnerRoot(forBuild: $0)) }
-        },
+        runningBuild: () -> String? = { RunnerInstaller.runningBuild() },
         stop: () throws -> Bool = { try SteamBundle.stopClient(step: defaultStep) },
         write: (String) throws -> Void = { try SteamDefaultTool.set($0) }
     ) throws {

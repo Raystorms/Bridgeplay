@@ -25,8 +25,10 @@ enum GameDefaults {
         case backend
         case highResolution
         case metalHUD
+        case perfOverlay
         case nvapi
         case metalFX
+        case dlssFrameGen
         case advertiseAVX
         case msync
         case vsync
@@ -45,8 +47,10 @@ enum GameDefaults {
             case .backend: ["BACKEND"]
             case .highResolution: ["RETINA", "BRIDGEPLAY_RETINA"]
             case .metalHUD: ["MTL_HUD_ENABLED"]
+            case .perfOverlay: ["PERF_OVERLAY", "BRIDGEPLAY_PERF_OVERLAY"]
             case .nvapi: ["NVAPI"]
             case .metalFX: ["D3DM_ENABLE_METALFX"]
+            case .dlssFrameGen: ["DLSS_FG"]
             case .advertiseAVX: ["ROSETTA_ADVERTISE_AVX"]
             case .msync: ["MSYNC"]
             case .vsync: ["VSYNC", "BRIDGEPLAY_VSYNC"]
@@ -60,15 +64,16 @@ enum GameDefaults {
         }
 
         // The same setting in a game's launch options, where it wins over every conf.
-        // NVAPI has no launch-option spelling, and WINEDLLOVERRIDES adds to DLLOVERRIDES
+        // NVAPI and DLSS_FG have no launch-option spelling, and WINEDLLOVERRIDES adds to DLLOVERRIDES
         // per DLL instead of replacing it.
         var launchKeys: [String] {
             switch self {
             case .backend: ["BRIDGEPLAY_BACKEND", "NOTPROTON_BACKEND", "CX_GRAPHICS_BACKEND"]
             case .metalHUD, .metalFX, .advertiseAVX: keys
             case .msync: ["WINEMSYNC"]
-            case .nvapi, .dllOverrides: []
-            case .highResolution, .vsync, .frameGen, .frameGenQuality, .frameGenUI, .frameGenFallback, .frameGenEngine:
+            case .nvapi, .dlssFrameGen, .dllOverrides: []
+            case .highResolution, .vsync, .frameGen, .frameGenQuality, .frameGenUI, .frameGenFallback, .frameGenEngine,
+                 .perfOverlay:
                 ["BRIDGEPLAY_\(keys[0])", "NOTPROTON_\(keys[0])"]
             }
         }
@@ -80,6 +85,7 @@ enum GameDefaults {
             case .frameGen: .choice(["0", "2", "3", "adaptive"])
             case .frameGenQuality: .choice(["performance", "balanced", "quality"])
             case .frameGenEngine: .choice(["own", "metalfx"])
+            case .perfOverlay: .choice(["0", "fps", "summary", "detailed"])
             case .dllOverrides: .dllOverrides
             default: .toggle
             }
@@ -93,6 +99,7 @@ enum GameDefaults {
             case .frameGen: ["0", "1", "2", "3", "adaptive"]
             case .frameGenQuality: ["performance", "balanced", "quality"]
             case .frameGenEngine: ["own", "metalfx"]
+            case .perfOverlay: ["0", "fps", "summary", "detailed"]
             default: ["0", "1"]
             }
         }
@@ -111,7 +118,7 @@ enum GameDefaults {
 
         var requirement: Requirement? {
             switch self {
-            case .nvapi, .metalFX: .d3dmetal
+            case .nvapi, .dlssFrameGen, .metalFX: .d3dmetal
             default: nil
             }
         }
@@ -136,7 +143,6 @@ enum GameDefaults {
 
     struct Problem: Equatable, Sendable {
         var setting: Setting
-        var value: String
         var reason: String
     }
 
@@ -183,7 +189,7 @@ enum GameDefaults {
                   let setting = Setting.allCases.first(where: { $0.keys.contains(key) }),
                   let reason = refusal(value, for: setting)
             else { continue }
-            found.append(Problem(setting: setting, value: value, reason: reason))
+            found.append(Problem(setting: setting, reason: reason))
         }
         return found
     }
@@ -201,10 +207,6 @@ enum GameDefaults {
             lines.append("\(setting.keys[0])=\(value)")
         }
         return lines.isEmpty ? "" : lines.joined(separator: "\n") + "\n"
-    }
-
-    static func setting(_ setting: Setting, to on: Bool, in text: String, shipped: String = "") -> String {
-        Self.setting(setting, to: on ? "1" : "0", in: text, shipped: shipped)
     }
 
     // Every setting back to Bridgeplay's defaults; lines for other keys stay.
