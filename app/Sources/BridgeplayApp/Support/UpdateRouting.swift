@@ -245,7 +245,20 @@ struct UpdateRouting: Equatable, Sendable {
         case restartCycle
         // Opting in also checks in the background.
         case restartCycleAndCheck
+
+        // The SPUUpdater calls, in order. resetUpdateCycle holds a session while it works out the
+        // next check, so a check made after it is refused; a background check reschedules the
+        // cycle itself when it ends.
+        var calls: [UpdaterCall] {
+            switch self {
+            case .none: []
+            case .restartCycle: [.resetUpdateCycle]
+            case .restartCycleAndCheck: [.checkInBackground]
+            }
+        }
     }
+
+    enum UpdaterCall: Equatable, Sendable { case resetUpdateCycle, checkInBackground }
 
     let running: RunningBuild
     private(set) var settings: UpdateSettings
@@ -336,13 +349,22 @@ struct UpdateRouting: Equatable, Sendable {
             restartQueued = true
             return .none
         }
+        reroute()
         return enrolled ? .restartCycleAndCheck : .restartCycle
     }
 
     mutating func sessionEnded() -> PreferenceAction {
         guard restartQueued else { return .none }
         restartQueued = false
+        reroute()
         return settings.enrolled ? .restartCycleAndCheck : .restartCycle
+    }
+
+    // Sparkle asks for the feed and channels before the next check starts (resetUpdateCycle
+    // compares them with the last check's), so they follow the preference at once.
+    private mutating func reroute() {
+        route = UpdateRoute.make(state: .of(enrolled: settings.enrolled, running: running.channel),
+                                 settings: settings, betaFeedFailed: false)
     }
 
     func prediction(enrolled: Bool) -> UpdatePrediction {

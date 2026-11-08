@@ -219,8 +219,25 @@ struct UpdateRoutingTests {
     func queuedRestart() {
         var routing = UpdateRouting(running: running(79, .stable), settings: UpdateSettings())
         #expect(routing.preferenceChanged(enrolled: true, sessionInProgress: true) == .none)
+        #expect(routing.route.feedURL == nil, "the session in progress keeps its route")
         #expect(routing.sessionEnded() == .restartCycleAndCheck)
+        #expect(routing.route.feedURL == BetaUpdates.betaFeedURL)
         #expect(routing.sessionEnded() == .none)
+    }
+
+    @Test("A preference change routes at once, and opting in checks without resetting first")
+    func preferenceOrdering() {
+        var routing = UpdateRouting(running: running(79, .stable), settings: UpdateSettings())
+        let optIn = routing.preferenceChanged(enrolled: true, sessionInProgress: false)
+        // Sparkle refuses a background check made while resetUpdateCycle's probe holds the session.
+        #expect(optIn.calls == [.checkInBackground])
+        #expect(routing.route.feedURL == BetaUpdates.betaFeedURL)
+        #expect(routing.route.allowedChannels == ["beta", "beta-critical"])
+
+        let optOut = routing.preferenceChanged(enrolled: false, sessionInProgress: false)
+        #expect(optOut.calls == [.resetUpdateCycle])
+        #expect(routing.route.feedURL == nil && routing.route.allowedChannels.isEmpty)
+        #expect(UpdateRouting.PreferenceAction.none.calls.isEmpty)
     }
 }
 

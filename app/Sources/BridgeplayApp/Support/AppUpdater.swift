@@ -88,13 +88,11 @@ final class AppUpdater {
     private func apply(_ action: UpdateRouting.PreferenceAction) {
         #if !DEBUG
         let updater = controller.updater
-        switch action {
-        case .none: break
-        case .restartCycle:
-            updater.resetUpdateCycle()
-        case .restartCycleAndCheck:
-            updater.resetUpdateCycle()
-            updater.checkForUpdatesInBackground()
+        for call in action.calls {
+            switch call {
+            case .resetUpdateCycle: updater.resetUpdateCycle()
+            case .checkInBackground: updater.checkForUpdatesInBackground()
+            }
         }
         #endif
     }
