@@ -16,7 +16,8 @@ already passed `make ci-checks`, here or in the `app` workflow on GitHub (only t
 bump differs), skips them;
 `BRIDGEPLAY_FORCE_CHECKS=1` runs them anyway. Installed apps read
 `https://github.com/raymondchins/Bridgeplay/releases/latest/download/appcast.xml`
-(`SUFeedURL`), so whatever release is marked **Latest** is the update feed.
+(`SUFeedURL`), so whatever release is marked **Latest** is the update feed. Apps enrolled in
+beta updates, and beta builds leaving them, read the beta feed instead (see Betas).
 
 ## Version scheme
 
@@ -85,6 +86,18 @@ crash hotfix from upstream, it still bumps the patch.
 
 `release-local.sh` does not publish betas: a stamped build no longer matches `dylib/version.h`, so
 its version check stops it. `make versioncheck` covers the stamp, the bump and the sync.
+
+The app works out its updater state on every check from the `BetaUpdates` default (a boolean,
+off when missing or unreadable) and the running build's channel: `stable` (off, stable build)
+reads `SUFeedURL` exactly as before; `beta` (on) and `leaving` (off, beta build) read
+`https://github.com/raymondchins/Bridgeplay/releases/download/beta-feed/appcast.xml`. `beta` takes
+items on the `beta` and `beta-critical` channels, `leaving` only `beta-critical`, and both take the
+highest build above the running one. A stable item reaches a beta build only when its
+`<bridgeplay:containsBetas>` list (`81-85,87`) names that build, so nobody is downgraded. After a
+failed beta-feed check, the next check reads the stable feed under the same rules. Each check
+writes one `update check:` line to `bridgeplay.log` and the app log. For testing,
+`BetaFeedURLOverride` and `StableFeedURLOverride` replace the feeds in any build and are named in
+that line; enclosure signatures are still required.
 
 ## Steps
 
