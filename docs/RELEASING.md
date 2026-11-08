@@ -16,7 +16,8 @@ already passed `make ci-checks`, here or in the `app` workflow on GitHub (only t
 bump differs), skips them;
 `BRIDGEPLAY_FORCE_CHECKS=1` runs them anyway. Installed apps read
 `https://github.com/raymondchins/Bridgeplay/releases/latest/download/appcast.xml`
-(`SUFeedURL`), so whatever release is marked **Latest** is the update feed.
+(`SUFeedURL`), so whatever release is marked **Latest** is the update feed. Apps enrolled in
+beta updates, and beta builds leaving them, read the beta feed instead (see Betas).
 
 ## Version scheme
 
@@ -184,6 +185,23 @@ the remote can't be reached; `--dry-run` pushes nothing. `release-local.sh` clai
 way before building. Claim tags are never moved or deleted, and
 gaps in the numbers are fine. The release ledger's v1 format is frozen in `scripts/ledger-lib.sh`,
 which also reads it. `make ledgercheck` covers all of this against a local repository and a stub `gh`.
+
+The app works out its updater state on every check from the `BetaUpdates` default (a boolean,
+off when missing or unreadable) and the running build's channel: `stable` (off, stable build)
+reads `SUFeedURL` exactly as before; `beta` (on) and `leaving` (off, beta build) read
+`https://github.com/raymondchins/Bridgeplay/releases/download/beta-feed/appcast.xml`. `beta` takes
+items on the `beta` and `beta-critical` channels, `leaving` only `beta-critical`, and both take the
+highest build above the running one. A stable item reaches a beta build only when its
+`<bridgeplay:containsBetas>` list (`81-85,87`) names that build, so nobody is downgraded. After a
+failed beta-feed check, the next check reads the stable feed under the same rules. Each check
+writes one `update check:` line to `bridgeplay.log` and the app log. For testing,
+`BetaFeedURLOverride` and `StableFeedURLOverride` replace the feeds in any build and are named in
+that line; enclosure signatures are still required.
+
+The switch is hidden in this phase. `defaults write com.bridgeplay.Bridgeplay BetaUpdatesUI -bool
+true` shows **Get beta updates** in the Status page's Updates section; it writes `BetaUpdates`
+only after the user confirms. Without the key, that section appears only while the app is in the
+`beta` or `leaving` state, or once after a build that left the beta lands on stable.
 
 ## Steps
 
