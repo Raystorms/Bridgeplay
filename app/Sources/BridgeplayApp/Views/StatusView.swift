@@ -364,6 +364,8 @@ struct StatusView: View {
                 }
             }
 
+            BetaUpdatesSection()
+
             Section {
                 crossOverSection(snapshot)
             } header: {
